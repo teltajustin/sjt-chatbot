@@ -245,10 +245,10 @@ export default function Home() {
                   <div style={{ color: "#64748b", fontSize: 11 }}>{p.role} · {p.age}세</div>
                 </div>
               </div>
-              {/* ★ 주소 대신 skills_and_expertise 표시 */}
+              {/* ★ 주소 대신 skills_and_expertise 표시 (최대 250자) */}
               <div style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.5 }}>
-                {(p.skills_and_expertise || "").length > 120
-                  ? (p.skills_and_expertise || "").slice(0, 120) + "..."
+                {(p.skills_and_expertise || "").length > 250
+                  ? (p.skills_and_expertise || "").slice(0, 250) + "..."
                   : p.skills_and_expertise}
               </div>
             </div>
