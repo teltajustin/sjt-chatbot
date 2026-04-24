@@ -58,10 +58,7 @@ function EvalModal({ text, onClose }: { text: string; onClose: () => void }) {
         </div>
         <div style={{ whiteSpace: "pre-wrap", fontSize: 14, lineHeight: 1.8, color: "#334155" }}>{text}</div>
         <div style={{ marginTop: 20, textAlign: "center" }}>
-          <button onClick={onClose} style={{
-            background: "#1e293b", color: "#fff", border: "none", borderRadius: 10,
-            padding: "10px 24px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-          }}>확인 후 처음으로 돌아가기</button>
+          <button onClick={onClose} style={{ background: "#1e293b", color: "#fff", border: "none", borderRadius: 10, padding: "10px 24px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>확인 후 처음으로 돌아가기</button>
         </div>
       </div>
     </div>
@@ -112,82 +109,43 @@ export default function Home() {
     }
   }, [timerActive, timeLeft]);
 
-  // ── 세션 저장 ──
   const saveSession = useCallback(async (evalText: string) => {
     try {
       const jobLabel = JOB_CATEGORIES.find((j) => j.id === jobId)?.label || "";
       await fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          startedAt: sessionStartedAt,
-          jobId,
-          jobLabel,
-          scenarioId: scenario?.id,
-          scenarioTitle: scenario?.title,
-          provider: selectedProvider,
-          personas,
-          messages: messages.filter((m) => !m.loading),
-          evaluation: evalText,
-          totalCost,
-          totalTokens,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startedAt: sessionStartedAt, jobId, jobLabel, scenarioId: scenario?.id, scenarioTitle: scenario?.title, provider: selectedProvider, personas, messages: messages.filter((m) => !m.loading), evaluation: evalText, totalCost, totalTokens }),
       });
-    } catch (e) {
-      console.error("Session save failed:", e);
-    }
+    } catch (e) { console.error("Session save failed:", e); }
   }, [sessionStartedAt, jobId, scenario, selectedProvider, personas, messages, totalCost, totalTokens]);
 
-  // ── 평가 결과 닫기 → 첫 페이지로 ──
   const closeEvalAndReset = useCallback(() => {
-    setEvaluation(null);
-    setPhase("job");
-    setJobId("");
-    setPersonas([]);
-    setScenario(null);
-    setMessages([]);
-    setTotalCost(0);
-    setTotalTokens({ input: 0, output: 0 });
-    setTimeLeft(300);
+    setEvaluation(null); setPhase("job"); setJobId(""); setPersonas([]); setScenario(null);
+    setMessages([]); setTotalCost(0); setTotalTokens({ input: 0, output: 0 }); setTimeLeft(300);
     evalTriggered.current = false;
   }, []);
 
   const selectJob = useCallback(async (jid: string) => {
-    setJobId(jid);
-    setPhase("loading_personas");
-    setPersonaError("");
+    setJobId(jid); setPhase("loading_personas"); setPersonaError("");
     try {
       const res = await fetch(`/api/personas?job=${jid}`);
       const data = await res.json();
       if (data.error) { setPersonaError(data.error); setPhase("job"); return; }
-      setPersonas(data.personas);
-      setPhase("scenario");
-    } catch {
-      setPersonaError("페르소나 로드 실패. 다시 시도해주세요.");
-      setPhase("job");
-    }
+      setPersonas(data.personas); setPhase("scenario");
+    } catch { setPersonaError("페르소나 로드 실패. 다시 시도해주세요."); setPhase("job"); }
   }, []);
 
   const startScenario = useCallback((sc: Scenario) => {
-    setScenario(sc);
-    setPhase("chat");
-    setTimeLeft(300);
-    setTimerActive(true);
-    evalTriggered.current = false;
-    setTotalCost(0);
-    setTotalTokens({ input: 0, output: 0 });
-    setEvaluation(null);
-    setSessionStartedAt(new Date().toISOString());
-
+    setScenario(sc); setPhase("chat"); setTimeLeft(300); setTimerActive(true);
+    evalTriggered.current = false; setTotalCost(0); setTotalTokens({ input: 0, output: 0 });
+    setEvaluation(null); setSessionStartedAt(new Date().toISOString());
     const briefing = `[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 지금부터 5분간 팀원들과 사내 메신저에서 이 문제에 대해 논의합니다.\n\n당신의 역할:\n- 팀원들의 의견을 듣고 상황을 파악하세요.\n- 각자의 전문성을 활용해 해결 방향을 도출하세요.\n- 의견이 충돌하면 근거를 바탕으로 조율하세요.\n- 5분 안에 구체적인 다음 액션을 정하세요.\n\n대화를 시작해주세요.`;
     setMessages([{ sender: "system", text: briefing }]);
   }, []);
 
   const sendMessage = useCallback(async () => {
     if (!input.trim() || loading || !scenario || !timerActive) return;
-    const text = input.trim();
-    setInput("");
-    setLoading(true);
+    const text = input.trim(); setInput(""); setLoading(true);
     const userMsg: Msg = { sender: "user", text };
     const updated = [...messages, userMsg];
     setMessages([...updated, { sender: "loading", text: "", loading: true }]);
@@ -197,9 +155,8 @@ export default function Home() {
         body: JSON.stringify({ scenarioId: scenario.id, messages: updated, userMessage: text, personas, provider: selectedProvider }),
       });
       const data = await res.json();
-      if (data.error) {
-        setMessages([...updated, { sender: "system", text: `오류: ${data.error}` }]);
-      } else {
+      if (data.error) { setMessages([...updated, { sender: "system", text: `오류: ${data.error}` }]); }
+      else {
         setMessages([...updated, ...data.responses]);
         if (data.usage) {
           setTotalCost((c) => c + (data.usage.totalCost || 0));
@@ -207,8 +164,7 @@ export default function Home() {
         }
       }
     } catch { setMessages([...updated, { sender: "system", text: "네트워크 오류가 발생했습니다." }]); }
-    setLoading(false);
-    setTimeout(() => inputRef.current?.focus(), 100);
+    setLoading(false); setTimeout(() => inputRef.current?.focus(), 100);
   }, [input, loading, messages, scenario, personas, selectedProvider, timerActive]);
 
   const triggerAutoEvaluation = useCallback(async () => {
@@ -227,7 +183,6 @@ export default function Home() {
         setTotalCost((c) => c + (data.usage.cost || 0));
         setTotalTokens((t) => ({ input: t.input + (data.usage.inputTokens || 0), output: t.output + (data.usage.outputTokens || 0) }));
       }
-      // 세션 JSON 저장
       await saveSession(evalText);
     } catch { setEvaluation("평가 요청 중 오류가 발생했습니다."); }
     setPhase("chat");
@@ -241,9 +196,7 @@ export default function Home() {
       <div style={{ minHeight: "100vh", background: darkBg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ fontSize: 12, letterSpacing: 4, color: "#64748b", textTransform: "uppercase", marginBottom: 12, fontWeight: 500 }}>Situational Judgement Test</div>
         <h1 style={{ fontSize: 28, color: "#f8fafc", fontWeight: 900, marginBottom: 8, textAlign: "center" }}>상황판단 시뮬레이션</h1>
-        <p style={{ color: "#94a3b8", fontSize: 14, marginBottom: 12, textAlign: "center", maxWidth: 440, lineHeight: 1.6 }}>
-          직무를 선택하면 해당 분야의 가상 팀원 3명이 배정됩니다.<br/>5분간 실제 업무 상황에서 의사결정을 내려보세요.
-        </p>
+        <p style={{ color: "#94a3b8", fontSize: 14, marginBottom: 12, textAlign: "center", maxWidth: 440, lineHeight: 1.6 }}>직무를 선택하면 해당 분야의 가상 팀원 3명이 배정됩니다.<br/>5분간 실제 업무 상황에서 의사결정을 내려보세요.</p>
         {providers.length > 0 && (
           <div style={{ display: "flex", gap: 8, marginBottom: 28, flexWrap: "wrap", justifyContent: "center" }}>
             {providers.map((p) => (
@@ -251,27 +204,16 @@ export default function Home() {
                 background: selectedProvider === p.id ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.04)",
                 border: `1px solid ${selectedProvider === p.id ? "rgba(99,102,241,0.5)" : "rgba(255,255,255,0.08)"}`,
                 borderRadius: 10, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit",
-              }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: selectedProvider === p.id ? "#a5b4fc" : "#94a3b8" }}>{p.label}</div>
-              </button>
+              }}><div style={{ fontSize: 13, fontWeight: 600, color: selectedProvider === p.id ? "#a5b4fc" : "#94a3b8" }}>{p.label}</div></button>
             ))}
           </div>
         )}
-        {providers.length === 0 && (
-          <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12, padding: "12px 20px", marginBottom: 28, textAlign: "center" }}>
-            <div style={{ color: "#fca5a5", fontSize: 13 }}>API 키가 설정되지 않았습니다. .env.local 파일을 확인하세요.</div>
-          </div>
-        )}
+        {providers.length === 0 && <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12, padding: "12px 20px", marginBottom: 28, textAlign: "center" }}><div style={{ color: "#fca5a5", fontSize: 13 }}>API 키가 설정되지 않았습니다.</div></div>}
         {personaError && <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12, padding: "10px 18px", marginBottom: 20, color: "#fca5a5", fontSize: 13 }}>{personaError}</div>}
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center", maxWidth: 720 }}>
           {JOB_CATEGORIES.map((j) => (
             <button key={j.id} onClick={() => selectJob(j.id)} disabled={phase === "loading_personas" || providers.length === 0}
-              style={{
-                background: phase === "loading_personas" && jobId === j.id ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: "20px 18px", width: 140,
-                cursor: phase === "loading_personas" ? "wait" : providers.length === 0 ? "not-allowed" : "pointer",
-                textAlign: "center", fontFamily: "inherit", transition: "all 0.2s", opacity: providers.length === 0 ? 0.4 : 1,
-              }}
+              style={{ background: phase === "loading_personas" && jobId === j.id ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: "20px 18px", width: 140, cursor: phase === "loading_personas" ? "wait" : providers.length === 0 ? "not-allowed" : "pointer", textAlign: "center", fontFamily: "inherit", transition: "all 0.2s", opacity: providers.length === 0 ? 0.4 : 1 }}
               onMouseEnter={(e) => { if (providers.length > 0) e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = phase === "loading_personas" && jobId === j.id ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.04)"; }}>
               <div style={{ fontSize: 30, marginBottom: 8 }}>{j.icon}</div>
@@ -284,7 +226,7 @@ export default function Home() {
     );
   }
 
-  // ══════ Scenario Selection ══════
+  // ══════ Scenario Selection — skills_and_expertise 표시 ══════
   if (phase === "scenario") {
     const jobLabel = JOB_CATEGORIES.find((j) => j.id === jobId)?.label || "";
     const scenarios = getScenariosForJob(jobId);
@@ -295,24 +237,26 @@ export default function Home() {
         <h2 style={{ fontSize: 24, color: "#f8fafc", fontWeight: 900, marginBottom: 24, textAlign: "center" }}>상황을 선택하세요</h2>
         <div style={{ display: "flex", gap: 14, marginBottom: 32, flexWrap: "wrap", justifyContent: "center" }}>
           {personas.map((p) => (
-            <div key={p.id} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 14, padding: "12px 16px", maxWidth: 200, border: `1px solid ${p.color}33` }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <div key={p.id} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 14, padding: "14px 16px", maxWidth: 220, border: `1px solid ${p.color}33` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                 <span style={{ fontSize: 20 }}>{p.avatar}</span>
                 <div>
                   <div style={{ color: "#e2e8f0", fontSize: 13, fontWeight: 700 }}>{p.name}</div>
                   <div style={{ color: "#64748b", fontSize: 11 }}>{p.role} · {p.age}세</div>
                 </div>
               </div>
-              <div style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.4 }}>{p.province} {p.district} · {p.occupation}</div>
+              {/* ★ 주소 대신 skills_and_expertise 표시 */}
+              <div style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.5 }}>
+                {(p.skills_and_expertise || "").length > 120
+                  ? (p.skills_and_expertise || "").slice(0, 120) + "..."
+                  : p.skills_and_expertise}
+              </div>
             </div>
           ))}
         </div>
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center", maxWidth: 760 }}>
           {scenarios.map((sc) => (
-            <button key={sc.id} onClick={() => startScenario(sc)} style={{
-              background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 16, padding: "22px 20px", width: 340, cursor: "pointer", textAlign: "left", fontFamily: "inherit", transition: "all 0.2s",
-            }}
+            <button key={sc.id} onClick={() => startScenario(sc)} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: "22px 20px", width: 340, cursor: "pointer", textAlign: "left", fontFamily: "inherit", transition: "all 0.2s" }}
             onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; e.currentTarget.style.transform = "translateY(0)"; }}>
               <div style={{ fontSize: 28, marginBottom: 10 }}>{sc.icon}</div>
@@ -360,13 +304,7 @@ export default function Home() {
               disabled={loading || timerDone}
               style={{ flex: 1, padding: "10px 14px", borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 14, outline: "none", fontFamily: "inherit", background: loading || timerDone ? "#f8fafc" : "#fff" }} />
             <button onClick={sendMessage} disabled={!input.trim() || loading || timerDone}
-              style={{
-                background: input.trim() && !loading && !timerDone ? "#1e293b" : "#e2e8f0",
-                color: input.trim() && !loading && !timerDone ? "#fff" : "#94a3b8",
-                border: "none", borderRadius: 12, width: 42, height: 42, fontSize: 16,
-                cursor: input.trim() && !loading && !timerDone ? "pointer" : "default",
-                flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-              }}>↑</button>
+              style={{ background: input.trim() && !loading && !timerDone ? "#1e293b" : "#e2e8f0", color: input.trim() && !loading && !timerDone ? "#fff" : "#94a3b8", border: "none", borderRadius: 12, width: 42, height: 42, fontSize: 16, cursor: input.trim() && !loading && !timerDone ? "pointer" : "default", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>↑</button>
           </div>
         )}
       </div>

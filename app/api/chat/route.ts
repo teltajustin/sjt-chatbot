@@ -16,6 +16,12 @@ function buildConversationText(messages: any[], personas: Persona[]): string {
     .join("\n");
 }
 
+// 최근 N턴의 발언자 ID 추출
+function getRecentSpeakers(messages: any[], lastN: number): string[] {
+  const employeeMsgs = messages.filter((m: any) => m.sender !== "user" && m.sender !== "system" && !m.loading);
+  return employeeMsgs.slice(-lastN).map((m: any) => m.sender);
+}
+
 function ensureCompleteSentence(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return trimmed;
@@ -31,15 +37,32 @@ function ensureCompleteSentence(text: string): string {
 }
 
 const decideSpeakers = traceable(
-  async function decideSpeakers(convText: string, scenario: any, personas: Persona[], provider: LLMProvider) {
+  async function decideSpeakers(
+    convText: string, scenario: any, personas: Persona[],
+    recentSpeakers: string[], provider: LLMProvider
+  ) {
     const sys = buildOrchestratorPrompt(personas, scenario);
-    const result = await callLLM(provider, sys, `대화:\n${convText}\n\n다음 발언자를 JSON으로.`, 400);
+
+    // 최근 발언자 정보를 명시적으로 전달
+    const recentInfo = recentSpeakers.length > 0
+      ? `\n\n[최근 발언 이력] 최근 직원 발언 순서: ${recentSpeakers.map(id => {
+          const p = personas.find(pp => pp.id === id);
+          return p?.name || id;
+        }).join(" → ")}\n위 직원 중 연속 2회 이상 발언한 사람은 이번에 제외하세요.`
+      : "";
+
+    const result = await callLLM(provider, sys,
+      `대화:\n${convText}${recentInfo}\n\n다음 발언자를 JSON으로.`, 400);
     try {
       const cleaned = result.text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       const parsed = JSON.parse(cleaned);
       return { speakers: parsed.speakers || [], cost: result.estimatedCost, usage: result.usage };
     } catch {
-      const shuffled = [...personas].sort(() => Math.random() - 0.5);
+      // fallback: 최근 발언하지 않은 사람 우선
+      const recentSet = new Set(recentSpeakers.slice(-2));
+      const quiet = personas.filter(p => !recentSet.has(p.id));
+      const pick = quiet.length > 0 ? quiet : personas;
+      const shuffled = [...pick].sort(() => Math.random() - 0.5);
       return {
         speakers: shuffled.slice(0, Math.random() > 0.5 ? 2 : 1).map((p) => ({
           id: p.id, should_address: "manager", emotion: "보통", intent: "의견 제시", thought: "",
@@ -59,7 +82,10 @@ const handleChatTurn = traceable(
     const allMessages = [...messages, { sender: "user", text: userMessage }];
     let convText = buildConversationText(allMessages, personas);
 
-    const orchResult = await decideSpeakers(convText, scenario, personas, provider);
+    // 최근 4개 직원 발언의 sender 추출
+    const recentSpeakers = getRecentSpeakers(allMessages, 4);
+
+    const orchResult = await decideSpeakers(convText, scenario, personas, recentSpeakers, provider);
     const speakerPlan = orchResult.speakers;
 
     const responses = [];
@@ -91,7 +117,9 @@ const handleChatTurn = traceable(
     }
 
     if (responses.length === 0) {
-      const fb = personas[0];
+      // fallback: 최근 안 말한 사람 선택
+      const recentSet = new Set(recentSpeakers.slice(-2));
+      const fb = personas.find(p => !recentSet.has(p.id)) || personas[0];
       const sys = buildEmployeeSystemPrompt(fb, scenario, personas);
       const turn = buildTurnPrompt(fb, convText, "manager", "보통", "의견 제시", "", personas);
       const r = await callLLM(provider, sys, turn, 400);

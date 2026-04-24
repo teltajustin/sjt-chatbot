@@ -64,11 +64,16 @@ async function callAnthropicRaw(sys: string, user: string, max: number) {
   };
 }
 
+// GPT-5는 max_completion_tokens 사용 (max_tokens 미지원)
 async function callOpenAIRaw(sys: string, user: string, max: number) {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY!}` },
-    body: JSON.stringify({ model: LLM_CONFIGS.openai.model, max_tokens: max, messages: [{ role: "system", content: sys }, { role: "user", content: user }] }),
+    body: JSON.stringify({
+      model: LLM_CONFIGS.openai.model,
+      max_completion_tokens: max,
+      messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+    }),
   });
   if (!res.ok) throw new Error(`OpenAI error: ${res.status} ${await res.text()}`);
   const data = await res.json();
@@ -87,7 +92,7 @@ async function callGeminiRaw(sys: string, user: string, max: number) {
     body: JSON.stringify({
       system_instruction: { parts: [{ text: sys }] },
       contents: [{ parts: [{ text: user }] }],
-      generationConfig: { maxOutputTokens: max, stopSequences: [] },
+      generationConfig: { maxOutputTokens: max },
     }),
   });
   if (!res.ok) throw new Error(`Gemini error: ${res.status} ${await res.text()}`);
