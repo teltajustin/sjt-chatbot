@@ -21,17 +21,17 @@ export const LLM_CONFIGS: Record<LLMProvider, LLMConfig> = {
   },
   openai: {
     provider: "openai",
-    model: "gpt-4o",
-    label: "GPT-4o",
-    inputCostPer1M: 2.5,
-    outputCostPer1M: 10,
+    model: "gpt-5",
+    label: "GPT-5",
+    inputCostPer1M: 2,
+    outputCostPer1M: 8,
   },
   gemini: {
     provider: "gemini",
-    model: "gemini-2.5-flash",
-    label: "Gemini 2.5 Flash",
-    inputCostPer1M: 0.15,
-    outputCostPer1M: 0.6,
+    model: "gemini-3.1-flash-lite-preview",
+    label: "Gemini 3.1 Flash-Lite",
+    inputCostPer1M: 0.1,
+    outputCostPer1M: 0.4,
   },
 };
 
@@ -53,17 +53,8 @@ export function getDefaultProvider(): LLMProvider {
 async function callAnthropicRaw(sys: string, user: string, max: number) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: LLM_CONFIGS.anthropic.model,
-      max_tokens: max,
-      system: sys,
-      messages: [{ role: "user", content: user }],
-    }),
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: LLM_CONFIGS.anthropic.model, max_tokens: max, system: sys, messages: [{ role: "user", content: user }] }),
   });
   if (!res.ok) throw new Error(`Anthropic error: ${res.status} ${await res.text()}`);
   const data = await res.json();
@@ -77,11 +68,7 @@ async function callOpenAIRaw(sys: string, user: string, max: number) {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY!}` },
-    body: JSON.stringify({
-      model: LLM_CONFIGS.openai.model,
-      max_tokens: max,
-      messages: [{ role: "system", content: sys }, { role: "user", content: user }],
-    }),
+    body: JSON.stringify({ model: LLM_CONFIGS.openai.model, max_tokens: max, messages: [{ role: "system", content: sys }, { role: "user", content: user }] }),
   });
   if (!res.ok) throw new Error(`OpenAI error: ${res.status} ${await res.text()}`);
   const data = await res.json();
@@ -100,7 +87,7 @@ async function callGeminiRaw(sys: string, user: string, max: number) {
     body: JSON.stringify({
       system_instruction: { parts: [{ text: sys }] },
       contents: [{ parts: [{ text: user }] }],
-      generationConfig: { maxOutputTokens: max },
+      generationConfig: { maxOutputTokens: max, stopSequences: [] },
     }),
   });
   if (!res.ok) throw new Error(`Gemini error: ${res.status} ${await res.text()}`);
@@ -112,7 +99,7 @@ async function callGeminiRaw(sys: string, user: string, max: number) {
 }
 
 export const callLLM = traceable(
-  async function callLLM(provider: LLMProvider, sys: string, user: string, max: number = 500) {
+  async function callLLM(provider: LLMProvider, sys: string, user: string, max: number = 400) {
     const config = LLM_CONFIGS[provider];
     let result;
     switch (provider) {
