@@ -19,25 +19,17 @@ function ChatBubble({ msg, personas }: { msg: Msg; personas: Persona[] }) {
   const isUser = msg.sender === "user";
   const isSystem = msg.sender === "system";
   const p = !isUser && !isSystem ? personas.find((x) => x.id === msg.sender) : null;
-
   if (isSystem) return (
     <div className="msg-enter" style={{ display: "flex", justifyContent: "center", margin: "14px 0" }}>
       <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 14, padding: "11px 18px", maxWidth: "90%", fontSize: 13, color: "#92400e", lineHeight: 1.6 }}>{msg.text}</div>
     </div>
   );
-
   return (
     <div className="msg-enter" style={{ display: "flex", flexDirection: isUser ? "row-reverse" : "row", alignItems: "flex-end", gap: 6, margin: "4px 0", paddingLeft: isUser ? 60 : 0, paddingRight: isUser ? 0 : 60 }}>
-      {!isUser && p && (
-        <div style={{ width: 32, height: 32, borderRadius: "50%", background: p.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>{p.avatar}</div>
-      )}
+      {!isUser && p && <div style={{ width: 32, height: 32, borderRadius: "50%", background: p.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>{p.avatar}</div>}
       <div style={{ maxWidth: "78%" }}>
         {!isUser && p && <div style={{ fontSize: 11, color: p.color, fontWeight: 600, marginBottom: 2 }}>{p.name}</div>}
-        <div style={{
-          background: isUser ? "#1e293b" : p?.bgLight || "#f1f5f9", color: isUser ? "#fff" : "#1e293b",
-          borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-          padding: "9px 13px", fontSize: 14, lineHeight: 1.6,
-        }}>
+        <div style={{ background: isUser ? "#1e293b" : p?.bgLight || "#f1f5f9", color: isUser ? "#fff" : "#1e293b", borderRadius: isUser ? "16px 16px 4px 16px" : "16px 16px 16px 4px", padding: "9px 13px", fontSize: 14, lineHeight: 1.6 }}>
           {msg.loading ? <span className="loading-dots" style={{ color: "#94a3b8" }}><span>●</span> <span>●</span> <span>●</span></span> : msg.text}
         </div>
       </div>
@@ -46,16 +38,13 @@ function ChatBubble({ msg, personas }: { msg: Msg; personas: Persona[] }) {
 }
 
 function Timer({ seconds, warning }: { seconds: number; warning: boolean }) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
+  const m = Math.floor(seconds / 60); const s = seconds % 60;
   return (
     <div className={warning ? "timer-warning" : ""} style={{
       background: warning ? "#fef2f2" : "#f0fdf4", border: `1px solid ${warning ? "#fca5a5" : "#86efac"}`,
       borderRadius: 8, padding: "4px 12px", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums",
       color: warning ? "#dc2626" : "#16a34a",
-    }}>
-      {m}:{s.toString().padStart(2, "0")}
-    </div>
+    }}>{m}:{s.toString().padStart(2, "0")}</div>
   );
 }
 
@@ -68,6 +57,12 @@ function EvalModal({ text, onClose }: { text: string; onClose: () => void }) {
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94a3b8" }}>✕</button>
         </div>
         <div style={{ whiteSpace: "pre-wrap", fontSize: 14, lineHeight: 1.8, color: "#334155" }}>{text}</div>
+        <div style={{ marginTop: 20, textAlign: "center" }}>
+          <button onClick={onClose} style={{
+            background: "#1e293b", color: "#fff", border: "none", borderRadius: 10,
+            padding: "10px 24px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+          }}>확인 후 처음으로 돌아가기</button>
+        </div>
       </div>
     </div>
   );
@@ -90,6 +85,7 @@ export default function Home() {
   const [timeLeft, setTimeLeft] = useState(300);
   const [timerActive, setTimerActive] = useState(false);
   const [personaError, setPersonaError] = useState("");
+  const [sessionStartedAt, setSessionStartedAt] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -116,6 +112,46 @@ export default function Home() {
     }
   }, [timerActive, timeLeft]);
 
+  // ── 세션 저장 ──
+  const saveSession = useCallback(async (evalText: string) => {
+    try {
+      const jobLabel = JOB_CATEGORIES.find((j) => j.id === jobId)?.label || "";
+      await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startedAt: sessionStartedAt,
+          jobId,
+          jobLabel,
+          scenarioId: scenario?.id,
+          scenarioTitle: scenario?.title,
+          provider: selectedProvider,
+          personas,
+          messages: messages.filter((m) => !m.loading),
+          evaluation: evalText,
+          totalCost,
+          totalTokens,
+        }),
+      });
+    } catch (e) {
+      console.error("Session save failed:", e);
+    }
+  }, [sessionStartedAt, jobId, scenario, selectedProvider, personas, messages, totalCost, totalTokens]);
+
+  // ── 평가 결과 닫기 → 첫 페이지로 ──
+  const closeEvalAndReset = useCallback(() => {
+    setEvaluation(null);
+    setPhase("job");
+    setJobId("");
+    setPersonas([]);
+    setScenario(null);
+    setMessages([]);
+    setTotalCost(0);
+    setTotalTokens({ input: 0, output: 0 });
+    setTimeLeft(300);
+    evalTriggered.current = false;
+  }, []);
+
   const selectJob = useCallback(async (jid: string) => {
     setJobId(jid);
     setPhase("loading_personas");
@@ -141,12 +177,11 @@ export default function Home() {
     setTotalCost(0);
     setTotalTokens({ input: 0, output: 0 });
     setEvaluation(null);
+    setSessionStartedAt(new Date().toISOString());
 
-    // 구체적 브리핑 (이모지/모델/직원목록 없이)
-    const briefing = `[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 지금부터 5분간 팀원들과 사내 메신저에서 이 문제에 대해 논의합니다.\n\n당신의 역할:\n- 팀원들의 의견을 듣고 조율하세요.\n- 문제의 핵심을 파악하고, 실행 가능한 해결 방향을 도출하세요.\n- 팀원 간 의견이 다를 경우 합리적으로 중재하세요.\n- 5분 안에 최소한의 합의점이나 다음 액션을 정하세요.\n\n대화를 시작해주세요.`;
-
+    const briefing = `[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 지금부터 5분간 팀원들과 사내 메신저에서 이 문제에 대해 논의합니다.\n\n당신의 역할:\n- 팀원들의 의견을 듣고 상황을 파악하세요.\n- 각자의 전문성을 활용해 해결 방향을 도출하세요.\n- 의견이 충돌하면 근거를 바탕으로 조율하세요.\n- 5분 안에 구체적인 다음 액션을 정하세요.\n\n대화를 시작해주세요.`;
     setMessages([{ sender: "system", text: briefing }]);
-  }, [personas, providers, selectedProvider]);
+  }, []);
 
   const sendMessage = useCallback(async () => {
     if (!input.trim() || loading || !scenario || !timerActive) return;
@@ -156,7 +191,6 @@ export default function Home() {
     const userMsg: Msg = { sender: "user", text };
     const updated = [...messages, userMsg];
     setMessages([...updated, { sender: "loading", text: "", loading: true }]);
-
     try {
       const res = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -164,7 +198,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (data.error) {
-        setMessages([...updated, { sender: "system", text: `오류가 발생했습니다: ${data.error}` }]);
+        setMessages([...updated, { sender: "system", text: `오류: ${data.error}` }]);
       } else {
         setMessages([...updated, ...data.responses]);
         if (data.usage) {
@@ -187,14 +221,17 @@ export default function Home() {
         body: JSON.stringify({ scenarioId: scenario.id, messages: messages.filter((m) => !m.loading), personas, provider: selectedProvider }),
       });
       const data = await res.json();
-      setEvaluation(data.evaluation || data.error || "평가에 실패했습니다.");
+      const evalText = data.evaluation || data.error || "평가에 실패했습니다.";
+      setEvaluation(evalText);
       if (data.usage) {
         setTotalCost((c) => c + (data.usage.cost || 0));
         setTotalTokens((t) => ({ input: t.input + (data.usage.inputTokens || 0), output: t.output + (data.usage.outputTokens || 0) }));
       }
-    } catch { setEvaluation("평가 요청 중 오류가 발생했습니다. 다시 시도해주세요."); }
+      // 세션 JSON 저장
+      await saveSession(evalText);
+    } catch { setEvaluation("평가 요청 중 오류가 발생했습니다."); }
     setPhase("chat");
-  }, [messages, scenario, personas, selectedProvider]);
+  }, [messages, scenario, personas, selectedProvider, saveSession]);
 
   const darkBg = "linear-gradient(145deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)";
 
@@ -291,7 +328,6 @@ export default function Home() {
   // ══════ Chat ══════
   const timerWarning = timeLeft <= 60 && timeLeft > 0;
   const timerDone = timeLeft <= 0;
-
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#f8fafc" }}>
       <div style={{ background: "#fff", borderBottom: "1px solid #e2e8f0", padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
@@ -307,12 +343,10 @@ export default function Home() {
         </div>
         <Timer seconds={timeLeft} warning={timerWarning} />
       </div>
-
       <div style={{ flex: 1, overflow: "auto", padding: "10px 14px", display: "flex", flexDirection: "column" }}>
         {messages.map((msg, i) => <ChatBubble key={i} msg={msg} personas={personas} />)}
         <div ref={chatEndRef} />
       </div>
-
       <div style={{ padding: "10px 14px 22px", background: "#fff", borderTop: "1px solid #e2e8f0", flexShrink: 0 }}>
         {timerDone && !evaluation ? (
           <div style={{ textAlign: "center", padding: "10px", color: "#94a3b8", fontSize: 14 }}>
@@ -336,8 +370,7 @@ export default function Home() {
           </div>
         )}
       </div>
-
-      {evaluation && <EvalModal text={evaluation} onClose={() => setEvaluation(null)} />}
+      {evaluation && <EvalModal text={evaluation} onClose={closeEvalAndReset} />}
     </div>
   );
 }
