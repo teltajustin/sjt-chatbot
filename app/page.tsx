@@ -25,11 +25,10 @@ function SlackMessage({msg,personas,isConsecutive}:{msg:Msg;personas:Persona[];i
       </div>
       {msg.text.length>60&&<div style={{background:"#fff9e6",border:"1px solid #f0e4c4",borderRadius:8,padding:"12px 16px",fontSize:"0.8125rem",color:"#1d1c1d",lineHeight:1.6,whiteSpace:"pre-wrap",marginTop:4}}>{msg.text}</div>}
     </div>);
-
   if(msg.loading)return(<div style={{padding:"6px 20px",display:"flex",gap:10}}><div style={{width:36,height:36}}/><div className="dots" style={{paddingTop:8,color:"#999"}}><span>·</span><span>·</span><span>·</span></div></div>);
 
   return(
-    <div className="slide-up" style={{padding:isConsecutive?"1px 20px":"8px 20px 1px",display:"flex",gap:10,cursor:"default",borderRadius:4,transition:"background 0.1s"}}
+    <div className="slide-up" style={{padding:isConsecutive?"1px 20px":"8px 20px 1px",display:"flex",gap:10,borderRadius:4,transition:"background 0.1s"}}
       onMouseEnter={e=>e.currentTarget.style.background="#f8f8f8"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
       {!isConsecutive?(<div style={{width:36,height:36,borderRadius:6,background:color,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"0.875rem",fontWeight:700,flexShrink:0}}>{initial}</div>):(<div style={{width:36,flexShrink:0}}/>)}
       <div style={{flex:1,minWidth:0}}>
@@ -39,20 +38,54 @@ function SlackMessage({msg,personas,isConsecutive}:{msg:Msg;personas:Persona[];i
     </div>);
 }
 
-function Timer({seconds}:{seconds:number}){
-  const m=Math.floor(seconds/60);const s=seconds%60;const warn=seconds<=60&&seconds>0;
-  return(<div className={warn?"timer-blink":""} style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.8125rem",fontWeight:500,color:warn?"#e01e5a":"#1d1c1d",background:warn?"#fce4ec":"#f0f0f0",padding:"4px 10px",borderRadius:6}}>{m}:{s.toString().padStart(2,"0")}</div>);
-}
+function Timer({seconds}:{seconds:number}){const m=Math.floor(seconds/60);const s=seconds%60;const warn=seconds<=60&&seconds>0;return(<div className={warn?"timer-blink":""} style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.8125rem",fontWeight:500,color:warn?"#e01e5a":"#1d1c1d",background:warn?"#fce4ec":"#f0f0f0",padding:"4px 10px",borderRadius:6}}>{m}:{s.toString().padStart(2,"0")}</div>);}
 
 function EvalModal({text,onClose}:{text:string;onClose:()=>void}){
   return(
     <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"clamp(12px,3vw,24px)"}} onClick={onClose}>
       <div style={{background:"#fff",borderRadius:12,maxWidth:640,width:"100%",maxHeight:"85vh",overflow:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}} onClick={e=>e.stopPropagation()}>
-        <div style={{padding:"20px 24px",borderBottom:"1px solid #e8e8e8",display:"flex",justifyContent:"space-between",alignItems:"center"}}><h2 style={{fontSize:"1.125rem",fontWeight:700,color:"#1d1c1d"}}>역량 평가 결과</h2><button onClick={onClose} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:"#999",padding:4}}>✕</button></div>
+        <div style={{padding:"20px 24px",borderBottom:"1px solid #e8e8e8",display:"flex",justifyContent:"space-between",alignItems:"center"}}><h2 style={{fontSize:"1.125rem",fontWeight:700}}>역량 평가 결과</h2><button onClick={onClose} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:"#999"}}>✕</button></div>
         <div style={{padding:"20px 24px",whiteSpace:"pre-wrap",fontSize:"0.875rem",lineHeight:1.8,color:"#1d1c1d"}}>{text}</div>
         <div style={{padding:"16px 24px",borderTop:"1px solid #e8e8e8",display:"flex",justifyContent:"flex-end"}}><button onClick={onClose} style={{background:"#007a5a",color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:"0.875rem",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>확인</button></div>
       </div>
     </div>);
+}
+
+/* ── Persona detail card for scenario page ── */
+function PersonaCard({p}:{p:Persona}){
+  const color=getAvatarBg(p.name);
+  const fields=[
+    {label:"직업",value:p.occupation},
+    {label:"학력",value:p.education_level},
+    {label:"거주",value:`${p.province} ${p.district}`},
+    {label:"결혼",value:p.marital_status},
+  ].filter(f=>f.value);
+  return(
+    <div style={{border:"1px solid #e8e8e8",borderRadius:12,overflow:"hidden",background:"#fff",flex:"1 1 280px",maxWidth:400,minWidth:260}}>
+      {/* Header with color bar */}
+      <div style={{background:color,padding:"16px 20px",display:"flex",alignItems:"center",gap:14}}>
+        <div style={{width:48,height:48,borderRadius:10,background:"rgba(255,255,255,0.2)",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"1.25rem",fontWeight:800,border:"2px solid rgba(255,255,255,0.4)"}}>{p.name.charAt(0)}</div>
+        <div>
+          <div style={{fontSize:"1.0625rem",fontWeight:700,color:"#fff"}}>{p.name}</div>
+          <div style={{fontSize:"0.8125rem",color:"rgba(255,255,255,0.8)"}}>{p.role} · {p.age}세 · {p.sex}</div>
+        </div>
+      </div>
+      {/* Info tags */}
+      <div style={{padding:"12px 20px",display:"flex",flexWrap:"wrap",gap:6,borderBottom:"1px solid #f0f0f0"}}>
+        {fields.map((f,i)=>(<span key={i} style={{fontSize:"0.6875rem",color:"#616061",background:"#f5f5f5",padding:"3px 8px",borderRadius:4}}>{f.label}: {f.value}</span>))}
+      </div>
+      {/* Persona summary */}
+      <div style={{padding:"12px 20px",borderBottom:"1px solid #f0f0f0"}}>
+        <div style={{fontSize:"0.6875rem",fontWeight:600,color:color,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>페르소나</div>
+        <div style={{fontSize:"0.8125rem",color:"#1d1c1d",lineHeight:1.55}}>{(p.persona||"").slice(0,200)}{(p.persona||"").length>200?"...":""}</div>
+      </div>
+      {/* Skills */}
+      <div style={{padding:"12px 20px"}}>
+        <div style={{fontSize:"0.6875rem",fontWeight:600,color:color,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>역량 및 전문성</div>
+        <div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.55}}>{(p.skills_and_expertise||"").slice(0,300)}{(p.skills_and_expertise||"").length>300?"...":""}</div>
+      </div>
+    </div>
+  );
 }
 
 export default function Home(){
@@ -81,10 +114,7 @@ export default function Home(){
 
   useEffect(()=>{fetch("/api/providers").then(r=>r.json()).then(d=>{setProviders(d.providers||[]);if(d.providers?.length>0)setSelectedProvider(d.providers[0].id);}).catch(()=>{});},[]);
   useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:"smooth"});},[messages]);
-  useEffect(()=>{
-    if(timerActive&&timeLeft>0){timerRef.current=setTimeout(()=>setTimeLeft(t=>t-1),1000);return()=>{if(timerRef.current)clearTimeout(timerRef.current);};}
-    if(timerActive&&timeLeft<=0&&!evalTriggered.current){evalTriggered.current=true;setTimerActive(false);triggerAutoEvaluation();}
-  },[timerActive,timeLeft]);
+  useEffect(()=>{if(timerActive&&timeLeft>0){timerRef.current=setTimeout(()=>setTimeLeft(t=>t-1),1000);return()=>{if(timerRef.current)clearTimeout(timerRef.current);};}if(timerActive&&timeLeft<=0&&!evalTriggered.current){evalTriggered.current=true;setTimerActive(false);triggerAutoEvaluation();}},[timerActive,timeLeft]);
 
   const saveSession=useCallback(async(evalText:string)=>{try{await fetch("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({startedAt:sessionStartedAt,jobId,jobLabel:JOB_CATEGORIES.find(j=>j.id===jobId)?.label||"",scenarioId:scenario?.id,scenarioTitle:scenario?.title,provider:selectedProvider,personas,messages:messages.filter(m=>!m.loading),evaluation:evalText,totalCost,totalTokens})});}catch(e){console.error(e);}},[sessionStartedAt,jobId,scenario,selectedProvider,personas,messages,totalCost,totalTokens]);
   const closeEvalAndReset=useCallback(()=>{setEvaluation(null);setPhase("job");setJobId("");setPersonas([]);setScenario(null);setMessages([]);setTotalCost(0);setTotalTokens({input:0,output:0});setTimeLeft(300);evalTriggered.current=false;},[]);
@@ -112,7 +142,6 @@ export default function Home(){
     await saveSession(evalText);}catch{setEvaluation("평가 요청 중 오류가 발생했습니다.");}setPhase("chat");
   },[messages,scenario,personas,selectedProvider,saveSession]);
 
-  // Auto-resize textarea
   const handleTextareaInput=(e:React.ChangeEvent<HTMLTextAreaElement>)=>{setInput(e.target.value);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";};
 
   /* ══════ JOB SELECTION ══════ */
@@ -140,33 +169,41 @@ export default function Home(){
     </div>);
   }
 
-  /* ══════ SCENARIO ══════ */
+  /* ══════ SCENARIO SELECTION — redesigned with rich persona cards ══════ */
   if(phase==="scenario"){
-    const jobLabel=JOB_CATEGORIES.find(j=>j.id===jobId)?.label||"";const scenarios=getScenariosForJob(jobId);
-    return(<div style={{minHeight:"100vh",background:"#fff",display:"flex",flexDirection:"column"}}>
-      <nav style={{borderBottom:"1px solid #e8e8e8",padding:"0 clamp(16px,4vw,48px)",height:56,display:"flex",alignItems:"center",gap:12}}>
+    const jobLabel=JOB_CATEGORIES.find(j=>j.id===jobId)?.label||"";
+    const scenarios=getScenariosForJob(jobId);
+    return(<div style={{minHeight:"100vh",background:"#fafbfc",display:"flex",flexDirection:"column"}}>
+      <nav style={{borderBottom:"1px solid #e8e8e8",padding:"0 clamp(16px,4vw,48px)",height:56,display:"flex",alignItems:"center",gap:12,background:"#fff"}}>
         <button onClick={()=>setPhase("job")} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:"#616061"}}>←</button>
         <div style={{width:28,height:28,borderRadius:6,background:"#4a154b",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:14,fontWeight:700}}>S</div>
-        <span style={{fontSize:"0.9375rem",fontWeight:700,color:"#1d1c1d"}}>SJT 시뮬레이션</span><span style={{fontSize:"0.75rem",color:"#616061",background:"#f0f0f0",padding:"2px 8px",borderRadius:4}}>{jobLabel}</span>
+        <span style={{fontSize:"0.9375rem",fontWeight:700,color:"#1d1c1d"}}>SJT 시뮬레이션</span>
+        <span style={{fontSize:"0.75rem",color:"#616061",background:"#f0f0f0",padding:"2px 8px",borderRadius:4}}>{jobLabel}</span>
       </nav>
-      <div style={{flex:1,padding:"clamp(20px,4vw,48px) clamp(16px,4vw,48px)",maxWidth:960,margin:"0 auto",width:"100%"}}>
-        <div style={{marginBottom:32}}>
-          <h3 style={{fontSize:"0.8125rem",fontWeight:600,color:"#616061",marginBottom:12,textTransform:"uppercase",letterSpacing:1}}>배정된 팀원</h3>
-          <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-            {personas.map(p=>(<div key={p.id} style={{flex:"1 1 240px",maxWidth:320,border:"1px solid #e8e8e8",borderRadius:10,padding:16}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                <div style={{width:36,height:36,borderRadius:6,background:getAvatarBg(p.name),display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"0.875rem",fontWeight:700}}>{p.name.charAt(0)}</div>
-                <div><div style={{fontSize:"0.9375rem",fontWeight:700,color:"#1d1c1d"}}>{p.name}</div><div style={{fontSize:"0.75rem",color:"#616061"}}>{p.role} · {p.age}세</div></div>
-              </div>
-              <div style={{fontSize:"0.75rem",color:"#616061",lineHeight:1.5}}>{(p.skills_and_expertise||"").slice(0,250)}{(p.skills_and_expertise||"").length>250?"...":""}</div>
-            </div>))}
+      <div style={{flex:1,padding:"clamp(20px,3vw,40px) clamp(16px,4vw,48px)",maxWidth:1100,margin:"0 auto",width:"100%"}}>
+        {/* Team section */}
+        <div style={{marginBottom:40}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
+            <h2 style={{fontSize:"1.125rem",fontWeight:700,color:"#1d1c1d"}}>배정된 팀원</h2>
+            <span style={{fontSize:"0.75rem",color:"#616061",background:"#f0f0f0",padding:"2px 8px",borderRadius:10}}>{personas.length}명</span>
+          </div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            {personas.map(p=><PersonaCard key={p.id} p={p}/>)}
           </div>
         </div>
-        <h3 style={{fontSize:"0.8125rem",fontWeight:600,color:"#616061",marginBottom:12,textTransform:"uppercase",letterSpacing:1}}>시나리오 선택</h3>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
-          {scenarios.map(sc=>(<button key={sc.id} onClick={()=>startScenario(sc)} style={{padding:20,borderRadius:10,border:"1px solid #e8e8e8",background:"#fff",cursor:"pointer",textAlign:"left",fontFamily:"inherit",transition:"all 0.15s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="#1264a3";e.currentTarget.style.boxShadow="0 0 0 1px #1264a3";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#e8e8e8";e.currentTarget.style.boxShadow="none";}}>
-            <div style={{fontSize:24,marginBottom:8}}>{sc.icon}</div><div style={{fontSize:"0.9375rem",fontWeight:700,color:"#1d1c1d",marginBottom:6}}>{sc.title}</div><div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.5}}>{sc.description}</div>
-          </button>))}
+
+        {/* Scenario section */}
+        <div>
+          <h2 style={{fontSize:"1.125rem",fontWeight:700,color:"#1d1c1d",marginBottom:16}}>시나리오를 선택하세요</h2>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14}}>
+            {scenarios.map(sc=>(<button key={sc.id} onClick={()=>startScenario(sc)} style={{padding:"24px 22px",borderRadius:12,border:"1px solid #e8e8e8",background:"#fff",cursor:"pointer",textAlign:"left",fontFamily:"inherit",transition:"all 0.15s",display:"flex",gap:16,alignItems:"flex-start"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="#1264a3";e.currentTarget.style.boxShadow="0 0 0 1px #1264a3";e.currentTarget.style.transform="translateY(-1px)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#e8e8e8";e.currentTarget.style.boxShadow="none";e.currentTarget.style.transform="none";}}>
+              <div style={{fontSize:32,flexShrink:0,lineHeight:1}}>{sc.icon}</div>
+              <div>
+                <div style={{fontSize:"1rem",fontWeight:700,color:"#1d1c1d",marginBottom:6}}>{sc.title}</div>
+                <div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.6}}>{sc.description}</div>
+              </div>
+            </button>))}
+          </div>
         </div>
       </div>
     </div>);
@@ -175,7 +212,6 @@ export default function Home(){
   /* ══════ CHAT ══════ */
   const timerDone=timeLeft<=0;
   return(<div style={{height:"100vh",display:"flex",flexDirection:"column",background:"#fff"}}>
-    {/* Header */}
     <div style={{borderBottom:"1px solid #e8e8e8",padding:"0 20px",height:50,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         <button onClick={()=>{setTimerActive(false);setPhase("scenario");}} style={{background:"none",border:"none",fontSize:16,cursor:"pointer",color:"#616061"}}>←</button>
@@ -189,52 +225,36 @@ export default function Home(){
         {totalCost>0&&<span style={{fontSize:"0.6875rem",color:"#999",fontFamily:"'JetBrains Mono',monospace"}}>${totalCost.toFixed(4)}</span>}
       </div>
     </div>
-
-    {/* Scenario banner */}
     <div style={{borderBottom:"1px solid #e8e8e8",padding:"10px 20px",background:"#fafbfc",flexShrink:0}}>
       <div style={{fontSize:"0.75rem",color:"#616061",lineHeight:1.5}}><strong>{scenario?.icon} {scenario?.title}</strong> — {scenario?.description?.slice(0,150)}{(scenario?.description?.length||0)>150?"...":""}</div>
     </div>
-
-    {/* Messages */}
     <div style={{flex:1,overflow:"auto",paddingTop:8,paddingBottom:8}}>
       {messages.map((msg,i)=>{const prev=i>0?messages[i-1]:null;const isC=!!prev&&prev.sender===msg.sender&&!prev.loading&&prev.sender!=="system";return<SlackMessage key={i} msg={msg} personas={personas} isConsecutive={isC}/>;})}
       <div ref={chatEndRef}/>
     </div>
-
-    {/* ── Slack-style input box ── */}
+    {/* Slack input */}
     <div style={{padding:"0 20px 16px",flexShrink:0}}>
       {timerDone&&!evaluation?(
         <div style={{textAlign:"center",padding:14,color:"#616061",fontSize:"0.875rem",background:"#f8f8f8",borderRadius:8}}>{phase==="evaluating"?"분석 중...":"시간 종료 — 잠시 후 평가 결과가 표시됩니다."}</div>
       ):(
         <div style={{border:`1px solid ${inputFocused?"#1264a3":"#ccc"}`,borderRadius:10,overflow:"hidden",background:"#fff",transition:"border-color 0.15s",boxShadow:inputFocused?"0 0 0 1px #1264a3":"none"}}>
-          {/* Toolbar row */}
           <div style={{display:"flex",alignItems:"center",gap:2,padding:"6px 12px",borderBottom:"1px solid #f0f0f0"}}>
-            {["B","I","U","S","🔗","⊞","⊟","☰","</>"].map((t,i)=>(
-              <div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:t.length>1?14:13,color:"#999",cursor:"default",fontWeight:t==="B"?700:400,fontStyle:t==="I"?"italic":"normal",textDecoration:t==="U"?"underline":t==="S"?"line-through":"none"}}>{t}</div>
-            ))}
+            {["B","I","U","S","🔗","⊞","⊟","☰","</>"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:t.length>1?14:13,color:"#bbb",fontWeight:t==="B"?700:400,fontStyle:t==="I"?"italic":"normal",textDecoration:t==="U"?"underline":t==="S"?"line-through":"none"}}>{t}</div>))}
           </div>
-          {/* Textarea */}
-          <textarea ref={inputRef} value={input} onChange={handleTextareaInput}
-            onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)}
+          <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)}
             onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
             placeholder={loading?"팀원들이 응답 중...":timerDone?"시간 종료":`# ${scenario?.title||""}에 메시지 보내기`}
-            disabled={loading||timerDone}
-            rows={1}
-            style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:40,maxHeight:120}}/>
-          {/* Bottom bar */}
+            disabled={loading||timerDone} rows={1}
+            style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:44,maxHeight:120}}/>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 12px"}}>
-            <div style={{display:"flex",gap:2}}>
-              {["+","Aa","😊","@","📎","🎙"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:14,color:"#999",cursor:"default"}}>{t}</div>))}
-            </div>
-            <button onClick={sendMessage} disabled={!input.trim()||loading||timerDone}
-              style={{padding:"6px 12px",borderRadius:6,border:"none",background:input.trim()&&!loading&&!timerDone?"#007a5a":"#e8e8e8",color:input.trim()&&!loading&&!timerDone?"#fff":"#999",fontSize:"0.875rem",fontWeight:600,cursor:input.trim()&&!loading&&!timerDone?"pointer":"default",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4,transition:"background 0.15s"}}>
+            <div style={{display:"flex",gap:2}}>{["+","Aa","😊","@","📎","🎙"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:14,color:"#bbb"}}>{t}</div>))}</div>
+            <button onClick={sendMessage} disabled={!input.trim()||loading||timerDone} style={{padding:"6px 12px",borderRadius:6,border:"none",background:input.trim()&&!loading&&!timerDone?"#007a5a":"#e8e8e8",color:input.trim()&&!loading&&!timerDone?"#fff":"#999",fontSize:"0.875rem",fontWeight:600,cursor:input.trim()&&!loading&&!timerDone?"pointer":"default",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
               <span style={{fontSize:16}}>▶</span>
             </button>
           </div>
         </div>
       )}
     </div>
-
     {evaluation&&<EvalModal text={evaluation} onClose={closeEvalAndReset}/>}
   </div>);
 }
