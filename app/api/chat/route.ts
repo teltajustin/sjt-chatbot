@@ -67,7 +67,7 @@ function ensureCompleteSentence(text: string): string {
 function normalizeKo(text: string): string {
   return (text || "")
     .toLowerCase()
-    .replace(/[\s.,!?~·ㆍ:;()\[\]{}"'“”‘’\-_/]/g, "");
+    .replace(/[\\s.,!?~·ㆍ:;()\[\]{}"'“”‘’\-_/]/g, "");
 }
 
 function uniqueById(items: Persona[]): Persona[] {
@@ -129,7 +129,8 @@ function addResponseDelays(responses: EmployeeResponse[]): EmployeeResponse[] {
   return responses.map((r, index) => ({
     ...r,
     // 클라이언트는 이 값을 메시지 간 시차로 누적 적용한다. 각 직원 말풍선 간 최대 15초.
-    delayMs: index === 0 ? randomInt(1200, 4500) : randomInt(1800, 15000),
+    // 지목된 직원도 즉시 답장하지 않고, 실제 업무 메신저처럼 짧은 typing 지연 후 발송된다.
+    delayMs: index === 0 ? randomInt(2400, 6500) : randomInt(2600, 15000),
   }));
 }
 
@@ -194,31 +195,37 @@ function flattenAndSplitResponses(responses: EmployeeResponse[]): EmployeeRespon
   return flat;
 }
 
-// 이름/호칭 직접 호출 감지: "현지와 예슬이", "김현지 님", "현지한테" 등
+// 이름/호칭 직접 호출 감지: "@김현지", "김현지 님", "현지한테" 등
 function detectMentionedPersonas(userMessage: string, personas: Persona[]): Persona[] {
-  const normalized = normalizeKo(userMessage);
   const mentioned: Persona[] = [];
+  const text = userMessage || "";
 
   for (const p of personas) {
     const fullName = p.name || "";
     const givenName = fullName.length >= 2 ? fullName.slice(1) : fullName;
-    const aliases = [
-      fullName,
-      `${fullName}님`, `${fullName}씨`, `${fullName}이`, `${fullName}에게`, `${fullName}한테`, `${fullName}는`, `${fullName}은`,
-      givenName,
-      `${givenName}님`, `${givenName}씨`, `${givenName}아`, `${givenName}야`, `${givenName}이`,
-      `${givenName}이는`, `${givenName}이가`, `${givenName}에게`, `${givenName}한테`, `${givenName}는`, `${givenName}은`,
-      p.role,
-    ]
-      .filter(Boolean)
-      .map(normalizeKo)
-      .filter((a) => a.length >= 2);
+    const patterns: RegExp[] = [];
 
-    if (aliases.some((alias) => normalized.includes(alias))) mentioned.push(p);
+    if (fullName) {
+      patterns.push(new RegExp("@" + escapeRegExp(fullName) + "(?=\\s|[,，.?!?:;]|$|[은는이가에게한테께와과도의을를])"));
+      patterns.push(new RegExp("(^|[\\s,(，])" + escapeRegExp(fullName) + "\\s*" + OPTIONAL_MENTION_SUFFIX + "(?=\\s|[,，.?!?:;]|$|[은는이가에게한테께와과도의을를])"));
+    }
+
+    // 이름 두 글자만 부르는 경우는 호칭/조사가 붙은 독립 호명일 때만 지목으로 본다.
+    // 일반 단어 안의 이름 조각(예: 작성하시는, 완성하고)은 지목으로 보지 않는다.
+    if (givenName) {
+      patterns.push(new RegExp("(^|[\\s,(，])" + escapeRegExp(givenName) + "\\s*(?:님|씨|아|야|이는|이가|에게|한테|는|은|이|가)(?=\\s|[,，.?!?:;]|$)"));
+    }
+
+    if (p.role) {
+      patterns.push(new RegExp("(^|[\\s,(，])" + escapeRegExp(p.role) + "(?=\\s|[,，.?!?:;]|$)"));
+    }
+
+    if (patterns.some((re) => re.test(text))) mentioned.push(p);
   }
 
   return uniqueById(mentioned);
 }
+
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -227,14 +234,42 @@ function escapeRegExp(value: string): string {
 const MENTION_SUFFIX = "(?:님|씨|사원님|주임님|대리님|과장님|차장님|부장님|팀장님|실장님|책임님|선임님|프로님|매니저님|담당님)";
 const OPTIONAL_MENTION_SUFFIX = "(?:님|씨|사원님|주임님|대리님|과장님|차장님|부장님|팀장님|실장님|책임님|선임님|프로님|매니저님|담당님)?";
 
+
+function repairEmbeddedMentionArtifacts(text: string, personas: Persona[]): string {
+  let repaired = text;
+  const particleStarts = new Set(["은", "는", "이", "가", "에", "께", "한", "와", "과", "도", "의", "을", "를", "님", "씨", "께"]);
+  for (const p of personas) {
+    const fullName = p.name || "";
+    if (!fullName) continue;
+    const re = new RegExp("([가-힣A-Za-z0-9])@" + escapeRegExp(fullName) + "(?=([가-힣A-Za-z0-9]))", "g");
+    repaired = repaired.replace(re, (match, prev: string, next: string) => {
+      // 실제 멘션 앞 공백만 빠진 경우는 공백을 추가하고,
+      // 일반 단어 중간에서 잘못 생긴 @표시는 이름 조각을 원래 단어 형태로 복구한다.
+      if (particleStarts.has(next)) return `${prev} @${fullName}`;
+      return `${prev}${fullName.slice(1)}`;
+    });
+  }
+  return repaired;
+}
+
 function normalizeColleagueMentions(text: string, personas: Persona[], senderId?: string): string {
-  let normalized = text;
+  let normalized = repairEmbeddedMentionArtifacts(text, personas);
   for (const p of personas) {
     if (senderId && p.id === senderId) continue;
     const fullName = p.name || "";
     const givenName = fullName.length >= 2 ? fullName.slice(1) : fullName;
     const names = [fullName, givenName].filter(Boolean) as string[];
 
+    // 1) 이미 @직원이름 뒤에 조사·호칭이 바로 붙은 경우, 멘션 토큰은 @직원이름까지만 남기기 위해 공백을 넣는다.
+    // 예: @김천수께서 → @김천수 께서, @이은숙님 → @이은숙 님
+    if (fullName) {
+      const particlePattern = "(?:님께서|님께|님은|님이|님도|님과|님와|께서는|께서|께|님|씨|은|는|이|가|에게|한테|와|과|도|부터|까지|의|을|를)";
+      const attachedMention = new RegExp("@" + escapeRegExp(fullName) + "\\s*(" + particlePattern + ")", "g");
+      normalized = normalized.replace(attachedMention, `@${fullName} $1`);
+    }
+
+    // 2) 동료를 호칭과 함께 부른 경우만 명시적 멘션으로 정규화한다.
+    // 일반 단어 안의 이름 조각은 변환하지 않는다. 예: 작성하시는, 완성하고
     for (const name of names) {
       const re = new RegExp("(^|[\\s,(，])@?\\s*" + escapeRegExp(name) + "\\s*" + MENTION_SUFFIX + "(?=\\s|[,，:.?？！!]|$)", "g");
       normalized = normalized.replace(re, `$1@${p.name}`);
@@ -243,20 +278,26 @@ function normalizeColleagueMentions(text: string, personas: Persona[], senderId?
   return normalized;
 }
 
+
 function detectAddressedPersonas(text: string, personas: Persona[], senderId?: string): Persona[] {
   const mentioned: Persona[] = [];
+  const particlePattern = "(?:님께서|님께|님은|님이|님도|님과|님와|께서는|께서|께|님|씨|은|는|이|가|에게|한테|와|과|도|부터|까지|의|을|를)?";
   for (const p of personas) {
     if (senderId && p.id === senderId) continue;
     const fullName = p.name || "";
     const givenName = fullName.length >= 2 ? fullName.slice(1) : fullName;
     const candidates = [
-      fullName ? new RegExp("@?\\s*" + escapeRegExp(fullName) + "\\s*" + OPTIONAL_MENTION_SUFFIX + "\\s*[,，:]?") : null,
-      givenName ? new RegExp("@?\\s*" + escapeRegExp(givenName) + "\\s*" + MENTION_SUFFIX + "\\s*[,，:]?") : null,
+      // 명시적 멘션: @직원이름. 멘션 뒤 조사가 붙어도 라우팅은 인식한다.
+      fullName ? new RegExp("@" + escapeRegExp(fullName) + "(?=\\s|[,，.?!?:;]|$|[은는이가에게한테께와과도의을를])" + particlePattern) : null,
+      // 자연어 지칭: 직원 이름/이름+호칭이 독립 토큰으로 등장할 때만 인식한다.
+      fullName ? new RegExp("(^|[\\s,(，])" + escapeRegExp(fullName) + "\\s*" + OPTIONAL_MENTION_SUFFIX + "\\s*[,，:]?") : null,
+      givenName ? new RegExp("(^|[\\s,(，])" + escapeRegExp(givenName) + "\\s*" + MENTION_SUFFIX + "\\s*[,，:]?") : null,
     ].filter(Boolean) as RegExp[];
     if (candidates.some((re) => re.test(text))) mentioned.push(p);
   }
   return uniqueById(mentioned);
 }
+
 
 function extractKeywords(text: string): string[] {
   const stopwords = new Set([
@@ -513,6 +554,36 @@ const handleChatTurn = traceable(
     const finalSpeakerPlan: SpeakerPlanItem[] = [];
     const queuedIds = new Set(speakerQueue.map((s) => s.id));
     const spokenIds = new Set<string>();
+
+    // 10분 SJT 동안 세 직원이 모두 최소 1회 이상 발화할 수 있도록,
+    // 아직 한 번도 말하지 않은 직원에게 자연스러운 보충 발화 기회를 부여한다.
+    // 단, 사용자가 특정 직원을 명확히 지목한 초반 턴에는 지목 응답을 우선한다.
+    const historicalEmployeeSpeakers = new Set(
+      allMessages
+        .filter((m) => personas.some((p) => p.id === m.sender))
+        .map((m) => String(m.sender))
+    );
+    const userTurnCount = allMessages.filter((m) => m.sender === "user").length;
+    const silentPersonas = personas.filter((p) => !historicalEmployeeSpeakers.has(p.id) && !queuedIds.has(p.id));
+    const canAddCoverageSpeaker =
+      silentPersonas.length > 0 &&
+      speakerQueue.length < 3 &&
+      (mentionedPersonas.length === 0 || userTurnCount >= 3 || speakerQueue.length === 0);
+
+    if (canAddCoverageSpeaker) {
+      const candidate = silentPersonas.find((p) => !recentSpeakers.includes(p.id)) || silentPersonas[0];
+      if (candidate) {
+        speakerQueue.push({
+          id: candidate.id,
+          should_address: "manager",
+          emotion: "보충",
+          intent: "담당 관점 보충",
+          stance: "부분 동의 또는 실무 제약 제시",
+          thought: "아직 발화하지 않은 직원으로서 내 담당 업무 관점의 정보나 제약을 짧게 보충한다.",
+        });
+        queuedIds.add(candidate.id);
+      }
+    }
 
     let totalCost = orchResult.cost;
     let totalIn = orchResult.usage.input_tokens;

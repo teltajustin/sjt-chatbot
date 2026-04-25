@@ -26,24 +26,24 @@ function detectLocalMention(text:string, personas:Persona[]){
 }
 
 function renderMentionText(text:string,personas:Persona[]){
-  const honorificPattern="(?:님|씨|사원님|주임님|대리님|과장님|차장님|부장님|팀장님|실장님|책임님|선임님|프로님|매니저님|담당님)?";
-  const aliases=personas.flatMap(p=>{
-    const given=p.name&&p.name.length>=2?p.name.slice(1):p.name;
-    return [p.name,given].filter(Boolean).map(alias=>({alias:alias as string,full:p.name}));
-  }).sort((a,b)=>b.alias.length-a.alias.length);
-  if(aliases.length===0)return text;
-  const escaped=aliases.map(x=>x.alias.replace(/[.*+?^\x24{}()|[\]\\]/g,"\\$&"));
-  const pattern=new RegExp(`(@?(?:${escaped.join("|")})\\s*${honorificPattern})`,"g");
+  // 직원 멘션은 반드시 사용자가 보낸 텍스트 또는 에이전트 응답 안에
+  // 명시적으로 존재하는 "@직원이름"만 UI 멘션으로 렌더링한다.
+  // 이름이 일반 단어 안에 포함된 경우(예: 작성하시는, 완성하고)는 절대 멘션으로 변환하지 않는다.
+  const names=personas.map(p=>p.name).filter(Boolean).sort((a,b)=>b.length-a.length);
+  if(names.length===0)return text;
+  const escaped=names.map(x=>x.replace(/[.*+?^\x24{}()|[\]\\]/g,"\\$&"));
+  const pattern=new RegExp(`(@(?:${escaped.join("|")}))(?=\s|[,，.?!?:;]|$)`,"g");
   const parts=text.split(pattern);
   return parts.map((part,i)=>{
-    const clean=part.replace(/^@/,"").replace(new RegExp(`\\s*${honorificPattern}$`),"").trim();
-    const found=aliases.find(x=>x.alias===clean);
+    const clean=part.replace(/^@/,"").trim();
+    const found=names.find(name=>name===clean);
     if(found){
-      return <span key={i} className="mention-pill">@{found.full}</span>;
+      return <span key={i} className="mention-pill">@{found}</span>;
     }
     return <span key={i}>{part}</span>;
   });
 }
+
 
 function SlackMessage({msg,personas,isConsecutive}:{msg:Msg;personas:Persona[];isConsecutive:boolean}){
   const isUser=msg.sender==="user";const isSystem=msg.sender==="system";
@@ -147,8 +147,10 @@ export default function Home(){
     responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];
     const userMsg:Msg={sender:"user",text:input.trim(),ts:timeNow()};
     const updated=[...messages.filter(m=>!m.loading),userMsg];
-    const immediateTypingId=detectLocalMention(userMsg.text,personas);
-    setMessages(immediateTypingId?[...updated,{sender:immediateTypingId,text:"",loading:true,typingName:getTypingName(personas,immediateTypingId)}]:updated);setInput("");setLoading(true);
+
+    // 사용자가 특정 직원을 지칭했더라도 즉시 typing indicator를 띄우지 않는다.
+    // 실제 업무 메신저처럼 API 응답 이후 직원별 발송 예정 시점에 맞춰 typing → 메시지 순서로 표시한다.
+    setMessages(updated);setInput("");setLoading(true);
     if(inputRef.current)inputRef.current.style.height="auto";
     try{
       const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scenarioId:scenario.id,messages:updated,userMessage:userMsg.text,personas,provider:selectedProvider})});
@@ -158,22 +160,28 @@ export default function Home(){
       const responses=(data.responses||[]) as {sender:string;text:string;delayMs?:number}[];
       if(responses.length===0){setMessages(updated);setLoading(false);focusInput();return;}
 
-      setMessages([...updated,{sender:responses[0].sender,text:"",loading:true,typingName:getTypingName(personas,responses[0].sender)}]);
       responses.forEach((r,idx)=>{
         const elapsed=responses.slice(0,idx+1).reduce((sum,x)=>sum+(x.delayMs||0),0);
-        const timer=setTimeout(()=>{
+        const typingLead=Math.min(1400,Math.max(700,Math.floor((r.delayMs||1800)*0.45)));
+        const typingAt=Math.max(500,elapsed-typingLead);
+
+        const typingTimer=setTimeout(()=>{
+          setMessages(prev=>{
+            const withoutTyping=prev.filter(m=>!m.loading);
+            return [...withoutTyping,{sender:r.sender,text:"",loading:true,typingName:getTypingName(personas,r.sender)}];
+          });
+        },typingAt);
+
+        const messageTimer=setTimeout(()=>{
           setMessages(prev=>{
             const withoutTyping=prev.filter(m=>!m.loading);
             const next:Msg={sender:r.sender,text:r.text,ts:timeNow()};
-            if(idx<responses.length-1){
-              const nxt=responses[idx+1];
-              return [...withoutTyping,next,{sender:nxt.sender,text:"",loading:true,typingName:getTypingName(personas,nxt.sender)}];
-            }
             return [...withoutTyping,next];
           });
           if(idx===responses.length-1){setLoading(false);focusInput();}
         },elapsed);
-        responseTimersRef.current.push(timer);
+
+        responseTimersRef.current.push(typingTimer,messageTimer);
       });
     }
     catch{
@@ -183,16 +191,6 @@ export default function Home(){
     }
   },[input,loading,messages,scenario,personas,selectedProvider,timerActive,timeLeft,timerDone,focusInput]);
 
-  const doEvaluation=useCallback(async()=>{
-    if(!scenario)return;setPhase("evaluating");setMessages(p=>[...p.filter(m=>!m.loading),{sender:"system",text:"시간이 종료되었습니다. 대화 내용을 분석하고 있습니다.",ts:timeNow()}]);
-    try{const res=await fetch("/api/evaluate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scenarioId:scenario.id,messages:messages.filter(m=>!m.loading),personas,provider:selectedProvider})});
-    const data=await res.json();const evalText=data.evaluation||"평가 실패";setEvaluation(evalText);
-    if(data.usage){setTotalCost(c=>c+(data.usage.cost||0));setTotalTokens(t=>({input:t.input+(data.usage.inputTokens||0),output:t.output+(data.usage.outputTokens||0)}));}
-    await saveSession(evalText);}catch{setEvaluation("평가 요청 중 오류가 발생했습니다.");}setPhase("chat");
-  },[messages,scenario,personas,selectedProvider]);
-  const saveSession=useCallback(async(evalText?:string)=>{if(!scenario||messages.length<2)return;try{await fetch("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId,scenarioId:scenario.id,messages:messages.filter(m=>!m.loading),personas,evaluation:evalText,totalCost,totalTokens,startedAt:sessionStartedAt,endedAt:new Date().toISOString(),provider:selectedProvider})});}catch{}},[jobId,scenario,messages,personas,totalCost,totalTokens,sessionStartedAt,selectedProvider]);
-
-  useEffect(()=>{if(timerDone&&!evalTriggered.current&&messages.length>1){evalTriggered.current=true;setLoading(false);responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];setTimerActive(false);doEvaluation();}},[timerDone,messages.length,doEvaluation]);
 
   const handleTextareaInput=(e:ChangeEvent<HTMLTextAreaElement>)=>{setInput(e.target.value);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";};
 
@@ -259,7 +257,7 @@ export default function Home(){
         <div style={{border:`1px solid ${inputFocused?"#1264a3":"#ccc"}`,borderRadius:10,overflow:"hidden",background:"#fff",transition:"border-color 0.15s",boxShadow:inputFocused?"0 0 0 1px #1264a3":"none"}}>
           <div style={{display:"flex",alignItems:"center",gap:2,padding:"6px 12px",borderBottom:"1px solid #f0f0f0"}}>{["B","I","U","S","🔗","⊞","⊟","☰","</>"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:t.length>1?14:13,color:"#bbb",fontWeight:t==="B"?700:400,fontStyle:t==="I"?"italic":"normal",textDecoration:t==="U"?"underline":t==="S"?"line-through":"none"}}>{t}</div>))}</div>
           <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!loading&&!timerDone){e.preventDefault();sendMessage();}}}
-            placeholder={timerDone?"시간 종료":loading?"직원 응답 중에도 메시지를 미리 작성할 수 있습니다":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
+            placeholder={timerDone?"시간 종료":loading?"":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
             disabled={timerDone} rows={1} style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:44,maxHeight:120}}/>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 12px"}}>
             <div style={{display:"flex",gap:2}}>{["+","Aa","😊","@","📎","🎙"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:14,color:"#bbb"}}>{t}</div>))}</div>
