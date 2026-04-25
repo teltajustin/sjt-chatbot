@@ -1,4 +1,6 @@
 // lib/llm-client.ts
+// v9: GPT-4o + Gemini 3.1 Flash-Lite (+ Claude if key exists)
+
 import { traceable } from "langsmith/traceable";
 
 export type LLMProvider = "anthropic" | "openai" | "gemini";
@@ -21,32 +23,47 @@ export const LLM_CONFIGS: Record<LLMProvider, LLMConfig> = {
   },
   openai: {
     provider: "openai",
-    model: "gpt-5",
-    label: "GPT-5",
-    inputCostPer1M: 2,
-    outputCostPer1M: 8,
+    model: "gpt-4o",
+    label: "GPT-4o",
+    inputCostPer1M: 2.5,
+    outputCostPer1M: 10,
   },
   gemini: {
     provider: "gemini",
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3.1-flash-lite",
     label: "Gemini 3.1 Flash-Lite",
-    inputCostPer1M: 0.1,
-    outputCostPer1M: 0.4,
+    inputCostPer1M: 0.25,
+    outputCostPer1M: 1.5,
   },
+};
+
+const CHAT_PARAMS = {
+  temperature: 0.85,
+  top_p: 0.92,
+  frequency_penalty: 0.4,
+  presence_penalty: 0.3,
+};
+
+const GEMINI_PARAMS = {
+  temperature: 0.85,
+  topP: 0.92,
+  topK: 40,
+  frequencyPenalty: 0.4,
+  presencePenalty: 0.3,
 };
 
 export function getAvailableProviders(): LLMProvider[] {
   const available: LLMProvider[] = [];
-  if (process.env.ANTHROPIC_API_KEY) available.push("anthropic");
   if (process.env.OPENAI_API_KEY) available.push("openai");
   if (process.env.GEMINI_API_KEY) available.push("gemini");
+  if (process.env.ANTHROPIC_API_KEY) available.push("anthropic");
   return available;
 }
 
 export function getDefaultProvider(): LLMProvider {
-  if (process.env.ANTHROPIC_API_KEY) return "anthropic";
   if (process.env.OPENAI_API_KEY) return "openai";
   if (process.env.GEMINI_API_KEY) return "gemini";
+  if (process.env.ANTHROPIC_API_KEY) return "anthropic";
   throw new Error("API 키가 설정되지 않았습니다.");
 }
 
@@ -54,7 +71,11 @@ async function callAnthropicRaw(sys: string, user: string, max: number) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: LLM_CONFIGS.anthropic.model, max_tokens: max, system: sys, messages: [{ role: "user", content: user }] }),
+    body: JSON.stringify({
+      model: LLM_CONFIGS.anthropic.model, max_tokens: max, system: sys,
+      messages: [{ role: "user", content: user }],
+      temperature: CHAT_PARAMS.temperature, top_p: CHAT_PARAMS.top_p,
+    }),
   });
   if (!res.ok) throw new Error(`Anthropic error: ${res.status} ${await res.text()}`);
   const data = await res.json();
@@ -64,15 +85,15 @@ async function callAnthropicRaw(sys: string, user: string, max: number) {
   };
 }
 
-// GPT-5는 max_completion_tokens 사용 (max_tokens 미지원)
 async function callOpenAIRaw(sys: string, user: string, max: number) {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY!}` },
     body: JSON.stringify({
-      model: LLM_CONFIGS.openai.model,
-      max_completion_tokens: max,
+      model: LLM_CONFIGS.openai.model, max_tokens: max,
       messages: [{ role: "system", content: sys }, { role: "user", content: user }],
+      temperature: CHAT_PARAMS.temperature, top_p: CHAT_PARAMS.top_p,
+      frequency_penalty: CHAT_PARAMS.frequency_penalty, presence_penalty: CHAT_PARAMS.presence_penalty,
     }),
   });
   if (!res.ok) throw new Error(`OpenAI error: ${res.status} ${await res.text()}`);
@@ -92,7 +113,12 @@ async function callGeminiRaw(sys: string, user: string, max: number) {
     body: JSON.stringify({
       system_instruction: { parts: [{ text: sys }] },
       contents: [{ parts: [{ text: user }] }],
-      generationConfig: { maxOutputTokens: max },
+      generationConfig: {
+        maxOutputTokens: max,
+        temperature: GEMINI_PARAMS.temperature, topP: GEMINI_PARAMS.topP,
+        topK: GEMINI_PARAMS.topK,
+        frequencyPenalty: GEMINI_PARAMS.frequencyPenalty, presencePenalty: GEMINI_PARAMS.presencePenalty,
+      },
     }),
   });
   if (!res.ok) throw new Error(`Gemini error: ${res.status} ${await res.text()}`);
