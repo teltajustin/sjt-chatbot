@@ -123,7 +123,7 @@ async function buildPersonas(job: JobCategory): Promise<PersonaBuildResult> {
   }
 
   throw new Error(
-    `Hugging Face dataset did not return 3 valid personas after ${HF_PERSONA_GENERATION_MAX_ATTEMPTS} attempts.`
+    `선택한 직무에 맞는 팀원 정보를 충분히 불러오지 못했습니다. 다시 시도해 주세요.`
   );
 }
 
