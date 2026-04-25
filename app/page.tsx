@@ -23,7 +23,7 @@ function SlackMessage({ msg, personas, isConsecutive }: { msg: Msg; personas: Pe
   if (isSystem) return (
     <div className="slide-up" style={{ padding: "4px 20px", margin: "4px 0" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}>
-        <div style={{ height: 1, flex: 1, background: var("--border-light","#e8e8e8") }}/>
+        <div style={{ height: 1, flex: 1, background: "#e8e8e8" }}/>
         <span style={{ fontSize: "0.75rem", color: "#616061", whiteSpace: "nowrap", fontWeight: 500 }}>{msg.text.length > 60 ? "📋 시나리오 안내" : msg.text}</span>
         <div style={{ height: 1, flex: 1, background: "#e8e8e8" }}/>
       </div>
