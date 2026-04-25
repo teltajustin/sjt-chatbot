@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { JOB_CATEGORIES, JobCategory } from "@/lib/jobs";
 import { buildPersonaFromDataset } from "@/lib/personas";
 
-const HF_API = "https://datasets-server.huggingface.co/rows";
+const HF_ROWS_API = "https://datasets-server.huggingface.co/rows";
+const HF_SPLITS_API = "https://datasets-server.huggingface.co/splits";
 const DATASET = "nvidia/Nemotron-Personas-Korea";
 const DEFAULT_FETCH_TIMEOUT_MS = 8000;
 const HF_PERSONA_GENERATION_MAX_ATTEMPTS = 3;
-const PAGES_PER_ATTEMPT = 8;
+const PAGES_PER_ATTEMPT = 10;
+const EMERGENCY_BROAD_PAGES = 30;
 const ROWS_PER_PAGE = 100;
-const MAX_DATASET_OFFSET = 6_900_000;
+const FALLBACK_DATASET_ROW_COUNT = 1_000_000;
 
 const USER_FRIENDLY_RETRY_MESSAGE =
   "선택한 직무에 맞는 팀원 정보를 충분히 불러오지 못했습니다. 다시 시도해 주세요.";
@@ -23,6 +25,8 @@ type PersonaBuildResult = {
   matchedCandidateCounts: number[];
   usedBroadHuggingFacePool?: boolean;
 };
+
+let cachedDatasetRowCount: number | null = null;
 
 function normalizeText(value: unknown): string {
   return String(value || "").toLowerCase();
@@ -83,7 +87,24 @@ function isValidRow(row: any): boolean {
   return true;
 }
 
-async function fetchRowsWithTimeout(url: string): Promise<any[]> {
+function stableHash(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash >>> 0);
+}
+
+function buildOffset(nonce: string, attempt: number, page: number, rowCount: number): number {
+  const safeMaxOffset = Math.max(0, rowCount - ROWS_PER_PAGE);
+  if (safeMaxOffset <= 0) return 0;
+
+  const seed = stableHash(`${nonce}-${attempt}-${page}-${Date.now()}-${Math.random()}`);
+  return seed % safeMaxOffset;
+}
+
+async function fetchJsonWithTimeout(url: string): Promise<any | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DEFAULT_FETCH_TIMEOUT_MS);
 
@@ -95,44 +116,100 @@ async function fetchRowsWithTimeout(url: string): Promise<any[]> {
       },
       signal: controller.signal,
       cache: "no-store",
+      next: { revalidate: 0 },
     });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.rows || []).map((item: any) => item.row).filter(Boolean);
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function attemptFetchCandidates(job: JobCategory, attempt: number, nonce: string): Promise<Candidate[]> {
+async function getDatasetRowCount(): Promise<number> {
+  if (cachedDatasetRowCount && cachedDatasetRowCount > ROWS_PER_PAGE) return cachedDatasetRowCount;
+
+  const url = `${HF_SPLITS_API}?dataset=${encodeURIComponent(DATASET)}`;
+  const data = await fetchJsonWithTimeout(url);
+  const splits = Array.isArray(data?.splits) ? data.splits : [];
+  const train = splits.find((item: any) => item?.config === "default" && item?.split === "train") || splits[0];
+  const rowCount = Number(train?.num_rows || train?.num_examples || train?.numRows || 0);
+
+  if (Number.isFinite(rowCount) && rowCount > ROWS_PER_PAGE) {
+    cachedDatasetRowCount = rowCount;
+    return rowCount;
+  }
+
+  return FALLBACK_DATASET_ROW_COUNT;
+}
+
+async function fetchRowsWithOffset(offset: number, nonce: string): Promise<any[]> {
+  const url =
+    `${HF_ROWS_API}?dataset=${encodeURIComponent(DATASET)}` +
+    `&config=default&split=train&offset=${offset}&length=${ROWS_PER_PAGE}` +
+    `&retry=${encodeURIComponent(nonce)}`;
+
+  const data = await fetchJsonWithTimeout(url);
+  return (data?.rows || []).map((item: any) => item.row).filter(Boolean);
+}
+
+function appendRowsAsCandidates(rows: any[], keywords: string[], candidates: Candidate[], seenNames: Set<string>) {
+  for (const row of rows) {
+    if (!isValidRow(row)) continue;
+
+    const name = extractName(row);
+    if (seenNames.has(name)) continue;
+    seenNames.add(name);
+
+    const score = scoreCandidate(row, keywords);
+    candidates.push({ row, score, matched: score >= 1 });
+  }
+}
+
+async function attemptFetchCandidates(
+  job: JobCategory,
+  attempt: number,
+  nonce: string,
+  rowCount: number,
+  seenNames: Set<string>
+): Promise<Candidate[]> {
   const keywords = buildSearchKeywords(job);
   const candidates: Candidate[] = [];
-  const seenNames = new Set<string>();
 
   for (let page = 0; page < PAGES_PER_ATTEMPT; page++) {
-    const offset = Math.floor(Math.random() * MAX_DATASET_OFFSET);
-    const url =
-      `${HF_API}?dataset=${encodeURIComponent(DATASET)}` +
-      `&config=default&split=train&offset=${offset}&length=${ROWS_PER_PAGE}` +
-      `&nonce=${encodeURIComponent(`${nonce}-${attempt}-${page}-${Date.now()}`)}`;
-
-    const rows = await fetchRowsWithTimeout(url);
-
-    for (const row of rows) {
-      if (!isValidRow(row)) continue;
-
-      const name = extractName(row);
-      if (seenNames.has(name)) continue;
-      seenNames.add(name);
-
-      const score = scoreCandidate(row, keywords);
-      candidates.push({ row, score, matched: score >= 1 });
-    }
+    const offset = buildOffset(nonce, attempt, page, rowCount);
+    const rows = await fetchRowsWithOffset(offset, `${nonce}-${attempt}-${page}`);
+    appendRowsAsCandidates(rows, keywords, candidates, seenNames);
 
     const matchedCount = candidates.filter((item) => item.matched).length;
     if (matchedCount >= 8 && candidates.length >= 12) break;
+  }
+
+  return candidates;
+}
+
+async function fetchBroadCandidates(
+  job: JobCategory,
+  nonce: string,
+  rowCount: number,
+  seenNames: Set<string>
+): Promise<Candidate[]> {
+  const keywords = buildSearchKeywords(job);
+  const candidates: Candidate[] = [];
+  const fixedOffsets = [0, ROWS_PER_PAGE, 1_000, 5_000, 10_000, 50_000].filter((offset) => offset < rowCount);
+
+  for (const offset of fixedOffsets) {
+    const rows = await fetchRowsWithOffset(offset, `${nonce}-fixed-${offset}`);
+    appendRowsAsCandidates(rows, keywords, candidates, seenNames);
+    if (candidates.length >= 6) return candidates;
+  }
+
+  for (let page = 0; page < EMERGENCY_BROAD_PAGES; page++) {
+    const offset = buildOffset(nonce, 99, page, rowCount);
+    const rows = await fetchRowsWithOffset(offset, `${nonce}-broad-${page}`);
+    appendRowsAsCandidates(rows, keywords, candidates, seenNames);
+    if (candidates.length >= 6) break;
   }
 
   return candidates;
@@ -142,7 +219,7 @@ function selectDiverse(candidates: Candidate[], allowBroadHuggingFacePool: boole
   const pool = candidates
     .filter((item) => allowBroadHuggingFacePool || item.matched)
     .sort((a, b) => b.score - a.score)
-    .slice(0, Math.min(24, candidates.length));
+    .slice(0, Math.min(36, candidates.length));
 
   const selected: any[] = [];
   const usedNames = new Set<string>();
@@ -179,13 +256,36 @@ function selectDiverse(candidates: Candidate[], allowBroadHuggingFacePool: boole
   return selected;
 }
 
+function buildResult(
+  selectedRows: any[],
+  job: JobCategory,
+  attempts: number,
+  candidateCounts: number[],
+  matchedCandidateCounts: number[],
+  usedBroadHuggingFacePool?: boolean
+): PersonaBuildResult {
+  const roles = [...job.typicalRoles].sort(() => Math.random() - 0.5);
+  return {
+    personas: selectedRows.slice(0, 3).map((raw, index) =>
+      buildPersonaFromDataset(raw, index, roles[index % roles.length])
+    ),
+    source: "huggingface",
+    attempts,
+    candidateCounts,
+    matchedCandidateCounts,
+    usedBroadHuggingFacePool,
+  };
+}
+
 async function buildPersonas(job: JobCategory, nonce: string): Promise<PersonaBuildResult> {
   const candidateCounts: number[] = [];
   const matchedCandidateCounts: number[] = [];
   const allCandidates: Candidate[] = [];
+  const seenNames = new Set<string>();
+  const rowCount = await getDatasetRowCount();
 
   for (let attempt = 1; attempt <= HF_PERSONA_GENERATION_MAX_ATTEMPTS; attempt++) {
-    const candidates = await attemptFetchCandidates(job, attempt, nonce);
+    const candidates = await attemptFetchCandidates(job, attempt, nonce, rowCount, seenNames);
     allCandidates.push(...candidates);
 
     candidateCounts.push(candidates.length);
@@ -193,32 +293,27 @@ async function buildPersonas(job: JobCategory, nonce: string): Promise<PersonaBu
 
     const selected = selectDiverse(allCandidates, false);
     if (selected.length >= 3) {
-      const roles = [...job.typicalRoles].sort(() => Math.random() - 0.5);
-      return {
-        personas: selected.slice(0, 3).map((raw, index) =>
-          buildPersonaFromDataset(raw, index, roles[index % roles.length])
-        ),
-        source: "huggingface",
-        attempts: attempt,
-        candidateCounts,
-        matchedCandidateCounts,
-      };
+      return buildResult(selected, job, attempt, candidateCounts, matchedCandidateCounts);
     }
   }
 
+  // 직무 키워드와 정확히 맞는 후보가 부족하면, 같은 Hugging Face 데이터셋의 다른 범위에서
+  // 유효한 인물 3명을 다시 뽑아 진행한다. 로컬 기본 페르소나 fallback은 사용하지 않는다.
+  const broadCandidates = await fetchBroadCandidates(job, nonce, rowCount, seenNames);
+  allCandidates.push(...broadCandidates);
+  candidateCounts.push(broadCandidates.length);
+  matchedCandidateCounts.push(broadCandidates.filter((item) => item.matched).length);
+
   const broadSelected = selectDiverse(allCandidates, true);
   if (broadSelected.length >= 3) {
-    const roles = [...job.typicalRoles].sort(() => Math.random() - 0.5);
-    return {
-      personas: broadSelected.slice(0, 3).map((raw, index) =>
-        buildPersonaFromDataset(raw, index, roles[index % roles.length])
-      ),
-      source: "huggingface",
-      attempts: HF_PERSONA_GENERATION_MAX_ATTEMPTS,
+    return buildResult(
+      broadSelected,
+      job,
+      HF_PERSONA_GENERATION_MAX_ATTEMPTS,
       candidateCounts,
       matchedCandidateCounts,
-      usedBroadHuggingFacePool: true,
-    };
+      true
+    );
   }
 
   throw new Error(USER_FRIENDLY_RETRY_MESSAGE);
@@ -240,12 +335,14 @@ async function handlePersonaRequest(req: NextRequest, jobId: string | null, body
     return NextResponse.json(result, {
       headers: {
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
       },
     });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
       {
-        error: error?.message || USER_FRIENDLY_RETRY_MESSAGE,
+        error: USER_FRIENDLY_RETRY_MESSAGE,
         source: "huggingface",
         attempts: HF_PERSONA_GENERATION_MAX_ATTEMPTS,
       },
@@ -253,6 +350,8 @@ async function handlePersonaRequest(req: NextRequest, jobId: string | null, body
         status: 503,
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
         },
       }
     );

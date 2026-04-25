@@ -143,7 +143,7 @@ export default function Home(){
   const[timeLeft,setTimeLeft]=useState(CHAT_DURATION_SECONDS);const[timerActive,setTimerActive]=useState(false);const[evaluation,setEvaluation]=useState<string|null>(null);
   const[totalCost,setTotalCost]=useState(0);const[totalTokens,setTotalTokens]=useState({input:0,output:0});const[sessionStartedAt,setSessionStartedAt]=useState<string|null>(null);
   const[providers,setProviders]=useState<ProviderInfo[]>([]);const[selectedProvider,setSelectedProvider]=useState("");const[personaError,setPersonaError]=useState("");const[inputFocused,setInputFocused]=useState(false);
-  const chatEndRef=useRef<HTMLDivElement>(null);const inputRef=useRef<HTMLTextAreaElement>(null);const evalTriggered=useRef(false);const responseTimersRef=useRef<ReturnType<typeof setTimeout>[]>([]);
+  const chatEndRef=useRef<HTMLDivElement>(null);const inputRef=useRef<HTMLTextAreaElement>(null);const evalTriggered=useRef(false);const responseTimersRef=useRef<ReturnType<typeof setTimeout>[]>([]);const isComposingRef=useRef(false);
   const messagesRef=useRef<Msg[]>([]);const loadingRef=useRef(false);const activeResponseBatchRef=useRef(false);const queuedUserMessagesRef=useRef<Msg[]>([]);const processQueuedUserRef=useRef<()=>void>(()=>{});
   const timerDone=timeLeft<=0;
 
@@ -169,14 +169,17 @@ export default function Home(){
 
   const startScenario=useCallback((sc:Scenario)=>{responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];activeResponseBatchRef.current=false;queuedUserMessagesRef.current=[];setLoadingValue(false);setScenario(sc);setPhase("chat");setTimeLeft(CHAT_DURATION_SECONDS);setTimerActive(false);evalTriggered.current=false;setTotalCost(0);setTotalTokens({input:0,output:0});setEvaluation(null);setSessionStartedAt(new Date().toISOString());setMessagesValue([{sender:"system",text:`[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 첫 메시지를 보내면 10분 타이머가 시작됩니다.\n\n• 팀원마다 알고 있는 정보와 담당 업무가 다릅니다.\n• 각자의 의견, 일정, 우려를 확인하며 상황을 파악하세요.\n• 직원이 되묻거나 난색을 보이면 근거를 바탕으로 조율하세요.\n• 10분 안에 담당자, 기한, 우선순위, 리스크 관리 방식을 구체화하세요.`,ts:timeNow()}]);},[setLoadingValue,setMessagesValue]);
 
-  const selectJob=async(id:string)=>{if(!selectedProvider)return;setJobId(id);setPhase("loading_personas");setPersonaError("");try{const res=await fetch("/api/personas",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId:id,provider:selectedProvider})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data?.error||"페르소나 생성 실패");setPersonas(data.personas||[]);setPhase("scenario");}catch(e:any){setPersonaError(e.message||"팀원 배정 중 오류가 발생했습니다.");setPhase("job");}};
+  const selectJob=async(id:string)=>{if(!selectedProvider)return;setJobId(id);setPhase("loading_personas");setPersonaError("");try{const nonce=`${Date.now()}-${Math.random().toString(36).slice(2)}`;const res=await fetch(`/api/personas?retry=${encodeURIComponent(nonce)}`,{method:"POST",headers:{"Content-Type":"application/json"},cache:"no-store",body:JSON.stringify({jobId:id,provider:selectedProvider,nonce})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data?.error||"페르소나 생성 실패");setPersonas(data.personas||[]);setPhase("scenario");}catch(e:any){setPersonaError(e.message||"팀원 배정 중 오류가 발생했습니다.");setPhase("job");}};
 
-  const sendUserTurn=useCallback(async(userMsg:Msg)=>{
+  const sendUserTurn=useCallback(async(userMsg:Msg, appendToUi=true)=>{
     if(!scenario||timerDone)return;
     if(!timerActive&&timeLeft===CHAT_DURATION_SECONDS){setTimerActive(true);setSessionStartedAt(new Date().toISOString());}
 
-    const messagesForApi=[...messagesRef.current.filter(m=>!m.loading),userMsg];
-    setMessagesValue(prev=>[...prev.filter(m=>!m.loading),userMsg]);
+    const baseMessages=messagesRef.current.filter(m=>!m.loading);
+    const messagesForApi=appendToUi?[...baseMessages,userMsg]:baseMessages;
+    if(appendToUi){
+      setMessagesValue(prev=>[...prev.filter(m=>!m.loading),userMsg]);
+    }
     activeResponseBatchRef.current=true;
     setLoadingValue(true);
     scrollChatToBottom("auto");
@@ -235,8 +238,11 @@ export default function Home(){
 
   const processQueuedUserMessage=useCallback(()=>{
     if(timerDone||activeResponseBatchRef.current||loadingRef.current)return;
-    const next=queuedUserMessagesRef.current.shift();
-    if(next)sendUserTurn(next);
+    const queued=queuedUserMessagesRef.current.splice(0);
+    if(queued.length===0)return;
+    const last=queued[queued.length-1];
+    const combined:Msg={sender:"user",text:queued.map(m=>m.text).join("\n"),ts:last.ts};
+    sendUserTurn(combined,false);
   },[sendUserTurn,timerDone]);
 
   useEffect(()=>{processQueuedUserRef.current=processQueuedUserMessage;},[processQueuedUserMessage]);
@@ -250,16 +256,17 @@ export default function Home(){
     if(inputRef.current)inputRef.current.style.height="auto";
     focusInput();
 
-    // 직원 메시지가 순차 발송 중이면 사용자의 입력은 접수하되,
-    // 화면 출력과 다음 LLM 호출은 현재 직원 응답이 끝난 뒤 순서대로 진행한다.
-    // 예: emp_2 → emp_2 입력 중 user 전송 → 화면에는 emp_2 → emp_2 → user 순서로 표시.
+    // 직원 메시지는 예약된 순서대로 계속 발송하되, 사용자의 메시지는 즉시 화면에 표시한다.
+    // 새 LLM 응답 생성은 현재 직원 응답 묶음이 끝난 뒤 큐에 쌓인 사용자 메시지를 반영해 처리한다.
     if(activeResponseBatchRef.current||loadingRef.current){
+      setMessagesValue(prev=>[...prev.filter(m=>!m.loading),userMsg]);
       queuedUserMessagesRef.current.push(userMsg);
+      scrollChatToBottom("auto");
       return;
     }
 
-    await sendUserTurn(userMsg);
-  },[input,scenario,timerDone,focusInput,sendUserTurn]);
+    await sendUserTurn(userMsg,true);
+  },[input,scenario,timerDone,focusInput,sendUserTurn,setMessagesValue,scrollChatToBottom]);
 
 
 
@@ -397,8 +404,8 @@ export default function Home(){
       {timerDone&&!evaluation?(<div style={{textAlign:"center",padding:14,color:"#616061",fontSize:"0.875rem",background:"#f8f8f8",borderRadius:8}}>{phase==="evaluating"?"분석 중...":"시간 종료 — 잠시 후 평가 결과가 표시됩니다."}</div>):(
         <div style={{border:`1px solid ${inputFocused?"#1264a3":"#ccc"}`,borderRadius:10,overflow:"hidden",background:"#fff",transition:"border-color 0.15s",boxShadow:inputFocused?"0 0 0 1px #1264a3":"none"}}>
           <div style={{display:"flex",alignItems:"center",gap:2,padding:"6px 12px",borderBottom:"1px solid #f0f0f0"}}>{["B","I","U","S","🔗","⊞","⊟","☰","</>"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:t.length>1?14:13,color:"#bbb",fontWeight:t==="B"?700:400,fontStyle:t==="I"?"italic":"normal",textDecoration:t==="U"?"underline":t==="S"?"line-through":"none"}}>{t}</div>))}</div>
-          <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!timerDone){e.preventDefault();sendMessage();}}}
-            placeholder={timerDone?"시간 종료":loading?"직원 응답이 끝난 뒤 순차 전송됩니다":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
+          <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)} onCompositionStart={()=>{isComposingRef.current=true;}} onCompositionEnd={()=>{isComposingRef.current=false;}} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!timerDone){if(isComposingRef.current||e.nativeEvent.isComposing)return;e.preventDefault();sendMessage();}}}
+            placeholder={timerDone?"시간 종료":loading?"직원 응답 중에도 메시지를 보낼 수 있습니다":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
             disabled={timerDone} rows={1} style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:44,maxHeight:120}}/>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 12px"}}>
             <div style={{display:"flex",gap:2}}>{["+","Aa","😊","@","📎","🎙"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:14,color:"#bbb"}}>{t}</div>))}</div>
