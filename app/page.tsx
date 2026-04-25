@@ -12,17 +12,32 @@ const CHAT_DURATION_SECONDS=600;
 function getAvatarBg(n:string){let h=0;for(let i=0;i<n.length;i++)h=n.charCodeAt(i)+((h<<5)-h);return AVATAR_COLORS[Math.abs(h)%AVATAR_COLORS.length];}
 function timeNow(){return new Date().toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",hour12:false});}
 function getPersona(personas:Persona[],id:string){return personas.find(x=>x.id===id)||null;}
-function getTypingName(personas:Persona[],id:string){return getPersona(personas,id)?.name||"팀원";}
+function getTypingName(personas:Persona[],id:string){return getPersona(personas,id)?.name||"담당 직원";}
+function normalizeMention(text:string){return (text||"").toLowerCase().replace(/[\s.,!?~·ㆍ:;()\[\]{}"'“”‘’\-_/]/g,"");}
+function detectLocalMention(text:string, personas:Persona[]){
+  const normalized=normalizeMention(text);
+  for(const p of personas){
+    const full=p.name||"";
+    const given=full.length>=2?full.slice(1):full;
+    const aliases=[full,full+"님",full+"씨",full+"에게",full+"한테",given+"님",given+"씨",given+"에게",given+"한테",p.role].filter(Boolean).map(a=>normalizeMention(String(a)));
+    if(aliases.some(a=>a.length>=2&&normalized.includes(a))) return p.id;
+  }
+  return "";
+}
 
 function renderMentionText(text:string,personas:Persona[]){
-  const names=personas.map(p=>p.name).filter(Boolean).sort((a,b)=>b.length-a.length);
-  if(names.length===0)return text;
-  const escaped=names.map(n=>n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
-  const pattern=new RegExp(`(@?(?:${escaped.join("|")})\\s*(?:님)?)`,"g");
+  const aliases=personas.flatMap(p=>{
+    const given=p.name&&p.name.length>=2?p.name.slice(1):p.name;
+    return [p.name,given].filter(Boolean).map(alias=>({alias:alias as string,full:p.name}));
+  }).sort((a,b)=>b.alias.length-a.alias.length);
+  if(aliases.length===0)return text;
+  const escaped=aliases.map(x=>x.alias.replace(/[.*+?^\x24{}()|[\]\\]/g,"\\$&"));
+  const pattern=new RegExp(`(@?(?:${escaped.join("|")})\\s*(?:님|씨)?)`,"g");
   const parts=text.split(pattern);
   return parts.map((part,i)=>{
-    const clean=part.replace(/^@/,"").replace(/\s*(?:님)?$/,"");
-    if(names.includes(clean)){
+    const clean=part.replace(/^@/,"").replace(/\s*(?:님|씨)?$/,"").trim();
+    const found=aliases.find(x=>x.alias===clean);
+    if(found){
       return <span key={i} className="mention-pill">@{clean}</span>;
     }
     return <span key={i}>{part}</span>;
@@ -46,7 +61,7 @@ function SlackMessage({msg,personas,isConsecutive}:{msg:Msg;personas:Persona[];i
 
   if(msg.loading){
     const typingPersona=getPersona(personas,msg.sender);
-    const typingName=msg.typingName||typingPersona?.name||"팀원";
+    const typingName=msg.typingName||typingPersona?.name||"담당 직원";
     const typingAvatar=typingPersona?.avatar||"…";
     const typingColor=typingPersona?getAvatarBg(typingPersona.name):"#999";
     return(<div className="fade-in" style={{padding:"7px 20px",display:"flex",gap:10,alignItems:"flex-start"}}>
@@ -83,25 +98,23 @@ function EvalModal({text,onClose}:{text:string;onClose:()=>void}){
     </div>);
 }
 
+function compactText(text:string, max:number){
+  const clean=(text||"").replace(/\s+/g," ").trim();
+  if(clean.length<=max) return clean;
+  return clean.slice(0,max).replace(/[\s.,!?·ㆍ:;\-_/]+$/g,"")+"…";
+}
+
 function PersonaCard({p}:{p:Persona}){
   const color=getAvatarBg(p.name);
-  const fields=[
-    {label:"직업",value:p.occupation},
-    {label:"학력",value:p.education_level},
-    {label:"거주",value:`${p.province} ${p.district}`},
-    {label:"가족",value:p.marital_status},
-  ];
   return(<div style={{background:"#fff",border:"1px solid #e8e8e8",borderRadius:12,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}>
     <div style={{background:p.bgLight||"#f8f8f8",padding:"18px",borderBottom:"1px solid #eee"}}>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
         <div style={{width:56,height:56,borderRadius:14,background:color,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,boxShadow:"0 2px 4px rgba(0,0,0,0.08)"}}>{p.avatar}</div>
-        <div><div style={{fontSize:"1rem",fontWeight:800,color:"#1d1c1d"}}>{p.name}</div><div style={{fontSize:"0.8125rem",fontWeight:600,color:color,marginTop:2}}>{p.role}</div><div style={{fontSize:"0.75rem",color:"#616061",marginTop:2}}>{p.age}세 · {p.sex}</div></div>
+        <div><div style={{fontSize:"1rem",fontWeight:800,color:"#1d1c1d"}}>{p.name}</div><div style={{fontSize:"0.8125rem",fontWeight:600,color:color,marginTop:2}}>{p.role}</div></div>
       </div>
     </div>
     <div style={{padding:16}}>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>{fields.map(f=>(<div key={f.label} style={{background:"#f8f8f8",borderRadius:6,padding:"8px 10px"}}><div style={{fontSize:"0.625rem",color:"#999",fontWeight:600,marginBottom:2}}>{f.label}</div><div style={{fontSize:"0.75rem",color:"#1d1c1d",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.value||"-"}</div></div>))}</div>
-      <div style={{marginBottom:12}}><div style={{fontSize:"0.6875rem",fontWeight:700,color:"#616061",marginBottom:4}}>업무 스타일</div><div style={{fontSize:"0.8125rem",color:"#1d1c1d",lineHeight:1.55}}>{(p.speech_style||p.personality_traits||"").slice(0,160)}...</div></div>
-      <div><div style={{fontSize:"0.6875rem",fontWeight:700,color:"#616061",marginBottom:4}}>주요 전문성</div><div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.55}}>{(p.skills_and_expertise||"").slice(0,300)}{(p.skills_and_expertise||"").length>300?"...":""}</div></div>
+      <div><div style={{fontSize:"0.6875rem",fontWeight:700,color:"#616061",marginBottom:4}}>주요 전문성</div><div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.55}}>{compactText(p.skills_and_expertise||"담당 업무 기반 실무 판단",180)}</div></div>
     </div>
   </div>);
 }
@@ -125,7 +138,7 @@ export default function Home(){
 
   const startScenario=useCallback((sc:Scenario)=>{responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];setScenario(sc);setPhase("chat");setTimeLeft(CHAT_DURATION_SECONDS);setTimerActive(false);evalTriggered.current=false;setTotalCost(0);setTotalTokens({input:0,output:0});setEvaluation(null);setSessionStartedAt(new Date().toISOString());setMessages([{sender:"system",text:`[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 첫 메시지를 보내면 10분 타이머가 시작됩니다.\n\n• 팀원마다 알고 있는 정보와 담당 업무가 다릅니다.\n• 각자의 의견, 일정, 우려를 확인하며 상황을 파악하세요.\n• 직원이 되묻거나 난색을 보이면 근거를 바탕으로 조율하세요.\n• 10분 안에 담당자, 기한, 우선순위, 리스크 관리 방식을 구체화하세요.`,ts:timeNow()}]);},[]);
 
-  const selectJob=async(id:string)=>{if(!selectedProvider)return;setJobId(id);setPhase("loading_personas");setPersonaError("");try{const res=await fetch("/api/personas",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId:id,provider:selectedProvider})});if(!res.ok)throw new Error("페르소나 생성 실패");const data=await res.json();setPersonas(data.personas||[]);setPhase("scenario");}catch(e:any){setPersonaError(e.message||"팀원 배정 중 오류가 발생했습니다.");setPhase("job");}};
+  const selectJob=async(id:string)=>{if(!selectedProvider)return;setJobId(id);setPhase("loading_personas");setPersonaError("");try{const res=await fetch("/api/personas",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId:id,provider:selectedProvider})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data?.error||"페르소나 생성 실패");setPersonas(data.personas||[]);setPhase("scenario");}catch(e:any){setPersonaError(e.message||"팀원 배정 중 오류가 발생했습니다.");setPhase("job");}};
 
   const sendMessage=useCallback(async()=>{
     if(!input.trim()||!scenario||loading||timerDone)return;
@@ -133,7 +146,8 @@ export default function Home(){
     responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];
     const userMsg:Msg={sender:"user",text:input.trim(),ts:timeNow()};
     const updated=[...messages.filter(m=>!m.loading),userMsg];
-    setMessages([...updated,{sender:"loading",text:"",loading:true,typingName:"팀원"}]);setInput("");setLoading(true);
+    const immediateTypingId=detectLocalMention(userMsg.text,personas);
+    setMessages(immediateTypingId?[...updated,{sender:immediateTypingId,text:"",loading:true,typingName:getTypingName(personas,immediateTypingId)}]:updated);setInput("");setLoading(true);
     if(inputRef.current)inputRef.current.style.height="auto";
     try{
       const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scenarioId:scenario.id,messages:updated,userMessage:userMsg.text,personas,provider:selectedProvider})});
@@ -222,7 +236,7 @@ export default function Home(){
         </div>
         <div><h2 style={{fontSize:"1.125rem",fontWeight:700,color:"#1d1c1d",marginBottom:16}}>시나리오 선택</h2>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14}}>{scenarios.map(sc=>(<button key={sc.id} onClick={()=>startScenario(sc)} style={{background:"#fff",border:"1px solid #e8e8e8",borderRadius:12,padding:20,textAlign:"left",cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="#1264a3";e.currentTarget.style.boxShadow="0 4px 12px rgba(18,100,163,0.12)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#e8e8e8";e.currentTarget.style.boxShadow="none";}}>
-            <div style={{fontSize:"0.75rem",fontWeight:600,color:"#007a5a",marginBottom:8}}>{sc.difficulty||"기본"}</div><div style={{fontSize:"1rem",fontWeight:700,color:"#1d1c1d",marginBottom:8}}>{sc.title}</div><div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.6}}>{sc.description.slice(0,150)}...</div>
+            <div style={{fontSize:"0.75rem",fontWeight:600,color:"#007a5a",marginBottom:8}}>{sc.difficulty||"기본"}</div><div style={{fontSize:"1rem",fontWeight:700,color:"#1d1c1d",marginBottom:8}}>{sc.title}</div><div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.6}}>{compactText(sc.description,150)}</div>
           </button>))}</div>
         </div>
       </div>
@@ -244,7 +258,7 @@ export default function Home(){
         <div style={{border:`1px solid ${inputFocused?"#1264a3":"#ccc"}`,borderRadius:10,overflow:"hidden",background:"#fff",transition:"border-color 0.15s",boxShadow:inputFocused?"0 0 0 1px #1264a3":"none"}}>
           <div style={{display:"flex",alignItems:"center",gap:2,padding:"6px 12px",borderBottom:"1px solid #f0f0f0"}}>{["B","I","U","S","🔗","⊞","⊟","☰","</>"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:t.length>1?14:13,color:"#bbb",fontWeight:t==="B"?700:400,fontStyle:t==="I"?"italic":"normal",textDecoration:t==="U"?"underline":t==="S"?"line-through":"none"}}>{t}</div>))}</div>
           <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
-            placeholder={loading?"팀원들이 응답 중...":timerDone?"시간 종료":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
+            placeholder={loading?"직원 응답 대기 중...":timerDone?"시간 종료":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
             disabled={loading||timerDone} rows={1} style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:44,maxHeight:120}}/>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 12px"}}>
             <div style={{display:"flex",gap:2}}>{["+","Aa","😊","@","📎","🎙"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:14,color:"#bbb"}}>{t}</div>))}</div>
