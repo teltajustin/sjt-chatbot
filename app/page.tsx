@@ -192,6 +192,69 @@ export default function Home(){
   },[input,loading,messages,scenario,personas,selectedProvider,timerActive,timeLeft,timerDone,focusInput]);
 
 
+  const saveSession=useCallback(async(evalText?:string)=>{
+    if(!scenario||messages.filter(m=>!m.loading).length<2)return;
+    try{
+      await fetch("/api/sessions",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          startedAt:sessionStartedAt,
+          endedAt:new Date().toISOString(),
+          jobId,
+          jobLabel:JOB_CATEGORIES.find(j=>j.id===jobId)?.label||"",
+          scenarioId:scenario.id,
+          scenarioTitle:scenario.title,
+          provider:selectedProvider,
+          personas,
+          messages:messages.filter(m=>!m.loading),
+          evaluation:evalText,
+          totalCost,
+          totalTokens
+        })
+      });
+    }catch(e){
+      console.error(e);
+    }
+  },[sessionStartedAt,jobId,scenario,selectedProvider,personas,messages,totalCost,totalTokens]);
+
+  const doEvaluation=useCallback(async()=>{
+    if(!scenario)return;
+    setPhase("evaluating");
+    setMessages(p=>[...p.filter(m=>!m.loading),{sender:"system",text:"시간이 종료되었습니다. 대화 내용을 분석하고 있습니다.",ts:timeNow()}]);
+    try{
+      const cleanMessages=messages.filter(m=>!m.loading);
+      const res=await fetch("/api/evaluate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scenarioId:scenario.id,messages:cleanMessages,personas,provider:selectedProvider})});
+      const data=await res.json();
+      const evalText=data.evaluation||"평가 실패";
+      setEvaluation(evalText);
+      if(data.usage){
+        setTotalCost(c=>c+(data.usage.totalCost||data.usage.cost||0));
+        setTotalTokens(t=>({
+          input:t.input+(data.usage.totalInputTokens||data.usage.inputTokens||0),
+          output:t.output+(data.usage.totalOutputTokens||data.usage.outputTokens||0)
+        }));
+      }
+      await saveSession(evalText);
+    }catch{
+      const failText="평가 요청 중 오류가 발생했습니다.";
+      setEvaluation(failText);
+      await saveSession(failText);
+    }
+    setPhase("chat");
+  },[messages,scenario,personas,selectedProvider,saveSession]);
+
+  useEffect(()=>{
+    if(timerDone&&!evalTriggered.current&&messages.length>1){
+      evalTriggered.current=true;
+      setLoading(false);
+      responseTimersRef.current.forEach(clearTimeout);
+      responseTimersRef.current=[];
+      setTimerActive(false);
+      doEvaluation();
+    }
+  },[timerDone,messages.length,doEvaluation]);
+
   const handleTextareaInput=(e:ChangeEvent<HTMLTextAreaElement>)=>{setInput(e.target.value);e.target.style.height="auto";e.target.style.height=Math.min(e.target.scrollHeight,120)+"px";};
 
   if(phase==="job"||phase==="loading_personas"){
