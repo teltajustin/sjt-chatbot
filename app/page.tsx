@@ -144,6 +144,7 @@ export default function Home(){
   const[totalCost,setTotalCost]=useState(0);const[totalTokens,setTotalTokens]=useState({input:0,output:0});const[sessionStartedAt,setSessionStartedAt]=useState<string|null>(null);
   const[providers,setProviders]=useState<ProviderInfo[]>([]);const[selectedProvider,setSelectedProvider]=useState("");const[personaError,setPersonaError]=useState("");const[inputFocused,setInputFocused]=useState(false);
   const chatEndRef=useRef<HTMLDivElement>(null);const inputRef=useRef<HTMLTextAreaElement>(null);const evalTriggered=useRef(false);const responseTimersRef=useRef<ReturnType<typeof setTimeout>[]>([]);
+  const messagesRef=useRef<Msg[]>([]);const loadingRef=useRef(false);const activeResponseBatchRef=useRef(false);const queuedUserMessagesRef=useRef<Msg[]>([]);const processQueuedUserRef=useRef<()=>void>(()=>{});
   const timerDone=timeLeft<=0;
 
   const scrollChatToBottom=useCallback((behavior:ScrollBehavior="smooth")=>{
@@ -151,30 +152,33 @@ export default function Home(){
   },[]);
 
   useEffect(()=>{fetch("/api/providers").then(r=>r.json()).then(d=>{setProviders(d.providers||[]);setSelectedProvider(d.defaultProvider||d.providers?.[0]?.id||"");});},[]);
+  useEffect(()=>{messagesRef.current=messages;},[messages]);
+  useEffect(()=>{loadingRef.current=loading;},[loading]);
   useEffect(()=>{scrollChatToBottom("smooth");},[messages,scrollChatToBottom]);
   useEffect(()=>{if(!timerActive||timerDone)return;const t=setInterval(()=>setTimeLeft(s=>s<=1?0:s-1),1000);return()=>clearInterval(t);},[timerActive,timerDone]);
 
   const focusInput=useCallback(()=>setTimeout(()=>inputRef.current?.focus(),0),[]);
-  const closeEvalAndReset=useCallback(()=>{setEvaluation(null);setPhase("job");setJobId("");setPersonas([]);setScenario(null);setMessages([]);setTotalCost(0);setTotalTokens({input:0,output:0});setTimeLeft(CHAT_DURATION_SECONDS);setTimerActive(false);evalTriggered.current=false;responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];},[]);
+  const setLoadingValue=useCallback((value:boolean)=>{loadingRef.current=value;setLoading(value);},[]);
+  const setMessagesValue=useCallback((updater:Msg[]|((prev:Msg[])=>Msg[]))=>{
+    const prev=messagesRef.current;
+    const next=typeof updater==="function"?(updater as (prev:Msg[])=>Msg[])(prev):updater;
+    messagesRef.current=next;
+    setMessages(next);
+  },[]);
+  const closeEvalAndReset=useCallback(()=>{setEvaluation(null);setPhase("job");setJobId("");setPersonas([]);setScenario(null);setMessages([]);messagesRef.current=[];setTotalCost(0);setTotalTokens({input:0,output:0});setTimeLeft(CHAT_DURATION_SECONDS);setTimerActive(false);setLoadingValue(false);activeResponseBatchRef.current=false;queuedUserMessagesRef.current=[];evalTriggered.current=false;responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];},[setLoadingValue]);
 
-  const startScenario=useCallback((sc:Scenario)=>{responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];setScenario(sc);setPhase("chat");setTimeLeft(CHAT_DURATION_SECONDS);setTimerActive(false);evalTriggered.current=false;setTotalCost(0);setTotalTokens({input:0,output:0});setEvaluation(null);setSessionStartedAt(new Date().toISOString());setMessages([{sender:"system",text:`[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 첫 메시지를 보내면 10분 타이머가 시작됩니다.\n\n• 팀원마다 알고 있는 정보와 담당 업무가 다릅니다.\n• 각자의 의견, 일정, 우려를 확인하며 상황을 파악하세요.\n• 직원이 되묻거나 난색을 보이면 근거를 바탕으로 조율하세요.\n• 10분 안에 담당자, 기한, 우선순위, 리스크 관리 방식을 구체화하세요.`,ts:timeNow()}]);},[]);
+  const startScenario=useCallback((sc:Scenario)=>{responseTimersRef.current.forEach(clearTimeout);responseTimersRef.current=[];activeResponseBatchRef.current=false;queuedUserMessagesRef.current=[];setLoadingValue(false);setScenario(sc);setPhase("chat");setTimeLeft(CHAT_DURATION_SECONDS);setTimerActive(false);evalTriggered.current=false;setTotalCost(0);setTotalTokens({input:0,output:0});setEvaluation(null);setSessionStartedAt(new Date().toISOString());setMessagesValue([{sender:"system",text:`[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 첫 메시지를 보내면 10분 타이머가 시작됩니다.\n\n• 팀원마다 알고 있는 정보와 담당 업무가 다릅니다.\n• 각자의 의견, 일정, 우려를 확인하며 상황을 파악하세요.\n• 직원이 되묻거나 난색을 보이면 근거를 바탕으로 조율하세요.\n• 10분 안에 담당자, 기한, 우선순위, 리스크 관리 방식을 구체화하세요.`,ts:timeNow()}]);},[setLoadingValue,setMessagesValue]);
 
   const selectJob=async(id:string)=>{if(!selectedProvider)return;setJobId(id);setPhase("loading_personas");setPersonaError("");try{const res=await fetch("/api/personas",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({jobId:id,provider:selectedProvider})});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data?.error||"페르소나 생성 실패");setPersonas(data.personas||[]);setPhase("scenario");}catch(e:any){setPersonaError(e.message||"팀원 배정 중 오류가 발생했습니다.");setPhase("job");}};
 
-  const sendMessage=useCallback(async()=>{
-    const trimmed=input.trim();
-    if(!trimmed||!scenario||timerDone)return;
+  const sendUserTurn=useCallback(async(userMsg:Msg)=>{
+    if(!scenario||timerDone)return;
     if(!timerActive&&timeLeft===CHAT_DURATION_SECONDS){setTimerActive(true);setSessionStartedAt(new Date().toISOString());}
 
-    const userMsg:Msg={sender:"user",text:trimmed,ts:timeNow()};
-    const messagesForApi=[...messages.filter(m=>!m.loading),userMsg];
-
-    // 직원이 입력 중이어도 사용자의 메시지는 즉시 전송한다.
-    // 기존 직원 응답 타이머는 취소하지 않아 emp → user → emp 흐름이 가능하게 한다.
-    setMessages(prev=>[...prev,userMsg]);
-    setInput("");
-    setLoading(true);
-    if(inputRef.current)inputRef.current.style.height="auto";
+    const messagesForApi=[...messagesRef.current.filter(m=>!m.loading),userMsg];
+    setMessagesValue(prev=>[...prev.filter(m=>!m.loading),userMsg]);
+    activeResponseBatchRef.current=true;
+    setLoadingValue(true);
     scrollChatToBottom("auto");
 
     try{
@@ -183,7 +187,13 @@ export default function Home(){
       const data=await res.json();
       if(data.usage){setTotalCost(c=>c+(data.usage.totalCost||0));setTotalTokens(t=>({input:t.input+(data.usage.totalInputTokens||0),output:t.output+(data.usage.totalOutputTokens||0)}));}
       const responses=(data.responses||[]) as {sender:string;text:string;delayMs?:number}[];
-      if(responses.length===0){setLoading(false);focusInput();return;}
+      if(responses.length===0){
+        activeResponseBatchRef.current=false;
+        setLoadingValue(false);
+        focusInput();
+        setTimeout(()=>processQueuedUserRef.current(),0);
+        return;
+      }
 
       responses.forEach((r,idx)=>{
         const elapsed=responses.slice(0,idx+1).reduce((sum,x)=>sum+(x.delayMs||0),0);
@@ -191,30 +201,65 @@ export default function Home(){
         const typingAt=Math.max(500,elapsed-typingLead);
 
         const typingTimer=setTimeout(()=>{
-          setMessages(prev=>{
+          setMessagesValue(prev=>{
             const withoutSameTyping=prev.filter(m=>!(m.loading&&m.sender===r.sender));
             return [...withoutSameTyping,{sender:r.sender,text:"",loading:true,typingName:getTypingName(personas,r.sender)}];
           });
         },typingAt);
 
         const messageTimer=setTimeout(()=>{
-          setMessages(prev=>{
+          setMessagesValue(prev=>{
             const withoutSameTyping=prev.filter(m=>!(m.loading&&m.sender===r.sender));
             const next:Msg={sender:r.sender,text:r.text,ts:timeNow()};
             return [...withoutSameTyping,next];
           });
-          if(idx===responses.length-1){setLoading(false);focusInput();}
+          if(idx===responses.length-1){
+            activeResponseBatchRef.current=false;
+            setLoadingValue(false);
+            focusInput();
+            setTimeout(()=>processQueuedUserRef.current(),0);
+          }
         },elapsed);
 
         responseTimersRef.current.push(typingTimer,messageTimer);
       });
     }
     catch{
-      setMessages(prev=>[...prev.filter(m=>!m.loading),{sender:"system",text:"네트워크 오류가 발생했습니다.",ts:timeNow()}]);
-      setLoading(false);
+      setMessagesValue(prev=>[...prev.filter(m=>!m.loading),{sender:"system",text:"네트워크 오류가 발생했습니다.",ts:timeNow()}]);
+      activeResponseBatchRef.current=false;
+      setLoadingValue(false);
       focusInput();
+      setTimeout(()=>processQueuedUserRef.current(),0);
     }
-  },[input,messages,scenario,personas,selectedProvider,timerActive,timeLeft,timerDone,focusInput,scrollChatToBottom]);
+  },[scenario,personas,selectedProvider,timerActive,timeLeft,timerDone,focusInput,scrollChatToBottom,setLoadingValue,setMessagesValue]);
+
+  const processQueuedUserMessage=useCallback(()=>{
+    if(timerDone||activeResponseBatchRef.current||loadingRef.current)return;
+    const next=queuedUserMessagesRef.current.shift();
+    if(next)sendUserTurn(next);
+  },[sendUserTurn,timerDone]);
+
+  useEffect(()=>{processQueuedUserRef.current=processQueuedUserMessage;},[processQueuedUserMessage]);
+
+  const sendMessage=useCallback(async()=>{
+    const trimmed=input.trim();
+    if(!trimmed||!scenario||timerDone)return;
+
+    const userMsg:Msg={sender:"user",text:trimmed,ts:timeNow()};
+    setInput("");
+    if(inputRef.current)inputRef.current.style.height="auto";
+    focusInput();
+
+    // 직원 메시지가 순차 발송 중이면 사용자의 입력은 접수하되,
+    // 화면 출력과 다음 LLM 호출은 현재 직원 응답이 끝난 뒤 순서대로 진행한다.
+    // 예: emp_2 → emp_2 입력 중 user 전송 → 화면에는 emp_2 → emp_2 → user 순서로 표시.
+    if(activeResponseBatchRef.current||loadingRef.current){
+      queuedUserMessagesRef.current.push(userMsg);
+      return;
+    }
+
+    await sendUserTurn(userMsg);
+  },[input,scenario,timerDone,focusInput,sendUserTurn]);
 
 
 
@@ -273,13 +318,15 @@ export default function Home(){
   useEffect(()=>{
     if(timerDone&&!evalTriggered.current&&messages.length>1){
       evalTriggered.current=true;
-      setLoading(false);
+      setLoadingValue(false);
+      activeResponseBatchRef.current=false;
+      queuedUserMessagesRef.current=[];
       responseTimersRef.current.forEach(clearTimeout);
       responseTimersRef.current=[];
       setTimerActive(false);
       doEvaluation();
     }
-  },[timerDone,messages.length,doEvaluation]);
+  },[timerDone,messages.length,doEvaluation,setLoadingValue]);
 
   const handleTextareaInput=(e:ChangeEvent<HTMLTextAreaElement>)=>{
     setInput(e.target.value);
@@ -351,7 +398,7 @@ export default function Home(){
         <div style={{border:`1px solid ${inputFocused?"#1264a3":"#ccc"}`,borderRadius:10,overflow:"hidden",background:"#fff",transition:"border-color 0.15s",boxShadow:inputFocused?"0 0 0 1px #1264a3":"none"}}>
           <div style={{display:"flex",alignItems:"center",gap:2,padding:"6px 12px",borderBottom:"1px solid #f0f0f0"}}>{["B","I","U","S","🔗","⊞","⊟","☰","</>"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:t.length>1?14:13,color:"#bbb",fontWeight:t==="B"?700:400,fontStyle:t==="I"?"italic":"normal",textDecoration:t==="U"?"underline":t==="S"?"line-through":"none"}}>{t}</div>))}</div>
           <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!timerDone){e.preventDefault();sendMessage();}}}
-            placeholder={timerDone?"시간 종료":loading?"직원 응답 중에도 메시지를 미리 작성할 수 있습니다":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
+            placeholder={timerDone?"시간 종료":loading?"직원 응답이 끝난 뒤 순차 전송됩니다":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
             disabled={timerDone} rows={1} style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:44,maxHeight:120}}/>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 12px"}}>
             <div style={{display:"flex",gap:2}}>{["+","Aa","😊","@","📎","🎙"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:14,color:"#bbb"}}>{t}</div>))}</div>
