@@ -26,19 +26,20 @@ function detectLocalMention(text:string, personas:Persona[]){
 }
 
 function renderMentionText(text:string,personas:Persona[]){
+  const honorificPattern="(?:님|씨|사원님|주임님|대리님|과장님|차장님|부장님|팀장님|실장님|책임님|선임님|프로님|매니저님|담당님)?";
   const aliases=personas.flatMap(p=>{
     const given=p.name&&p.name.length>=2?p.name.slice(1):p.name;
     return [p.name,given].filter(Boolean).map(alias=>({alias:alias as string,full:p.name}));
   }).sort((a,b)=>b.alias.length-a.alias.length);
   if(aliases.length===0)return text;
   const escaped=aliases.map(x=>x.alias.replace(/[.*+?^\x24{}()|[\]\\]/g,"\\$&"));
-  const pattern=new RegExp(`(@?(?:${escaped.join("|")})\\s*(?:님|씨)?)`,"g");
+  const pattern=new RegExp(`(@?(?:${escaped.join("|")})\\s*${honorificPattern})`,"g");
   const parts=text.split(pattern);
   return parts.map((part,i)=>{
-    const clean=part.replace(/^@/,"").replace(/\s*(?:님|씨)?$/,"").trim();
+    const clean=part.replace(/^@/,"").replace(new RegExp(`\\s*${honorificPattern}$`),"").trim();
     const found=aliases.find(x=>x.alias===clean);
     if(found){
-      return <span key={i} className="mention-pill">@{clean}</span>;
+      return <span key={i} className="mention-pill">@{found.full}</span>;
     }
     return <span key={i}>{part}</span>;
   });
@@ -257,9 +258,9 @@ export default function Home(){
       {timerDone&&!evaluation?(<div style={{textAlign:"center",padding:14,color:"#616061",fontSize:"0.875rem",background:"#f8f8f8",borderRadius:8}}>{phase==="evaluating"?"분석 중...":"시간 종료 — 잠시 후 평가 결과가 표시됩니다."}</div>):(
         <div style={{border:`1px solid ${inputFocused?"#1264a3":"#ccc"}`,borderRadius:10,overflow:"hidden",background:"#fff",transition:"border-color 0.15s",boxShadow:inputFocused?"0 0 0 1px #1264a3":"none"}}>
           <div style={{display:"flex",alignItems:"center",gap:2,padding:"6px 12px",borderBottom:"1px solid #f0f0f0"}}>{["B","I","U","S","🔗","⊞","⊟","☰","</>"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:t.length>1?14:13,color:"#bbb",fontWeight:t==="B"?700:400,fontStyle:t==="I"?"italic":"normal",textDecoration:t==="U"?"underline":t==="S"?"line-through":"none"}}>{t}</div>))}</div>
-          <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
-            placeholder={loading?"직원 응답 대기 중...":timerDone?"시간 종료":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
-            disabled={loading||timerDone} rows={1} style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:44,maxHeight:120}}/>
+          <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!loading&&!timerDone){e.preventDefault();sendMessage();}}}
+            placeholder={timerDone?"시간 종료":loading?"직원 응답 중에도 메시지를 미리 작성할 수 있습니다":!timerActive?`첫 메시지를 보내면 10분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
+            disabled={timerDone} rows={1} style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:44,maxHeight:120}}/>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 12px"}}>
             <div style={{display:"flex",gap:2}}>{["+","Aa","😊","@","📎","🎙"].map((t,i)=>(<div key={i} style={{width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,fontSize:14,color:"#bbb"}}>{t}</div>))}</div>
             <button onClick={sendMessage} disabled={!input.trim()||loading||timerDone} style={{padding:"6px 12px",borderRadius:6,border:"none",background:input.trim()&&!loading&&!timerDone?"#007a5a":"#e8e8e8",color:input.trim()&&!loading&&!timerDone?"#fff":"#999",fontSize:"0.875rem",fontWeight:600,cursor:input.trim()&&!loading&&!timerDone?"pointer":"default",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><span style={{fontSize:16}}>▶</span></button>

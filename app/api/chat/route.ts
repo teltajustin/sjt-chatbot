@@ -220,6 +220,44 @@ function detectMentionedPersonas(userMessage: string, personas: Persona[]): Pers
   return uniqueById(mentioned);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const MENTION_SUFFIX = "(?:님|씨|사원님|주임님|대리님|과장님|차장님|부장님|팀장님|실장님|책임님|선임님|프로님|매니저님|담당님)";
+const OPTIONAL_MENTION_SUFFIX = "(?:님|씨|사원님|주임님|대리님|과장님|차장님|부장님|팀장님|실장님|책임님|선임님|프로님|매니저님|담당님)?";
+
+function normalizeColleagueMentions(text: string, personas: Persona[], senderId?: string): string {
+  let normalized = text;
+  for (const p of personas) {
+    if (senderId && p.id === senderId) continue;
+    const fullName = p.name || "";
+    const givenName = fullName.length >= 2 ? fullName.slice(1) : fullName;
+    const names = [fullName, givenName].filter(Boolean) as string[];
+
+    for (const name of names) {
+      const re = new RegExp("(^|[\\s,(，])@?\\s*" + escapeRegExp(name) + "\\s*" + MENTION_SUFFIX + "(?=\\s|[,，:.?？！!]|$)", "g");
+      normalized = normalized.replace(re, `$1@${p.name}`);
+    }
+  }
+  return normalized;
+}
+
+function detectAddressedPersonas(text: string, personas: Persona[], senderId?: string): Persona[] {
+  const mentioned: Persona[] = [];
+  for (const p of personas) {
+    if (senderId && p.id === senderId) continue;
+    const fullName = p.name || "";
+    const givenName = fullName.length >= 2 ? fullName.slice(1) : fullName;
+    const candidates = [
+      fullName ? new RegExp("@?\\s*" + escapeRegExp(fullName) + "\\s*" + OPTIONAL_MENTION_SUFFIX + "\\s*[,，:]?") : null,
+      givenName ? new RegExp("@?\\s*" + escapeRegExp(givenName) + "\\s*" + MENTION_SUFFIX + "\\s*[,，:]?") : null,
+    ].filter(Boolean) as RegExp[];
+    if (candidates.some((re) => re.test(text))) mentioned.push(p);
+  }
+  return uniqueById(mentioned);
+}
+
 function extractKeywords(text: string): string[] {
   const stopwords = new Set([
     "언제", "까지", "확인", "할수", "있어", "있나요", "있습니까", "결과", "검토", "마무리",
@@ -358,9 +396,9 @@ function normalizeSpeakerPlan(
 
   // 라우터 실패 시 최근 2회 발언자를 피해서 1명 선택
   const recentSet = new Set(recentSpeakers.slice(-2));
-  const fallback = personas.find((p) => !recentSet.has(p.id)) || personas[0];
-  return fallback
-    ? [{ id: fallback.id, should_address: "manager", emotion: "보통", intent: "의견 제시", stance: "확인필요", thought: "응답 공백을 막기 위해 관련 의견을 제시한다." }]
+  const backupSpeaker = personas.find((p) => !recentSet.has(p.id)) || personas[0];
+  return backupSpeaker
+    ? [{ id: backupSpeaker.id, should_address: "manager", emotion: "보통", intent: "의견 제시", stance: "확인필요", thought: "응답 공백을 막기 위해 관련 의견을 제시한다." }]
     : [];
 }
 
@@ -468,29 +506,41 @@ const handleChatTurn = traceable(
       heuristicPurpose,
       provider
     );
-    const speakerPlan = orchResult.speakers;
 
     const responses: EmployeeResponse[] = [];
+    const generatedMessages: any[] = [];
+    const speakerQueue: SpeakerPlanItem[] = [...orchResult.speakers];
+    const finalSpeakerPlan: SpeakerPlanItem[] = [];
+    const queuedIds = new Set(speakerQueue.map((s) => s.id));
+    const spokenIds = new Set<string>();
+
     let totalCost = orchResult.cost;
     let totalIn = orchResult.usage.input_tokens;
     let totalOut = orchResult.usage.output_tokens;
 
-    for (const speaker of speakerPlan) {
+    while (speakerQueue.length > 0 && finalSpeakerPlan.length < 3) {
+      const speaker = speakerQueue.shift()!;
+      queuedIds.delete(speaker.id);
+      if (!speaker?.id || spokenIds.has(speaker.id)) continue;
+
       const persona = personas.find((p) => p.id === speaker.id);
       if (!persona) continue;
+
+      const liveConvText = buildConversationText([...allMessages, ...generatedMessages], personas);
+      const liveState = buildStateMemory([...allMessages, ...generatedMessages], personas, userMessage, orchResult.purpose, ownershipHints);
 
       const sys = buildEmployeeSystemPrompt(persona, scenario, personas);
       const prompt = buildTurnPrompt(
         persona,
-        convText,
+        liveConvText,
         speaker.should_address || "manager",
         speaker.emotion || "보통",
         speaker.intent || "의견 제시",
         speaker.thought || "현재 맥락에서 내 담당 관점으로 기여한다.",
         personas,
         userMessage,
-        speakerPlan.map((s) => s.id),
-        conversationState,
+        [...finalSpeakerPlan.map((s) => s.id), ...speakerQueue.map((s) => s.id)],
+        liveState,
         speaker.stance || ""
       );
       const result = await callLLM(provider, sys, prompt, 700);
@@ -498,8 +548,47 @@ const handleChatTurn = traceable(
       totalIn += result.usage.input_tokens;
       totalOut += result.usage.output_tokens;
 
-      const text = limitSentences(ensureCompleteSentence(result.text), 5);
-      if (text) responses.push({ sender: persona.id, text });
+      const text = limitSentences(ensureCompleteSentence(normalizeColleagueMentions(result.text, personas, persona.id)), 5);
+      if (!text) continue;
+
+      responses.push({ sender: persona.id, text });
+      generatedMessages.push({ sender: persona.id, text });
+      finalSpeakerPlan.push(speaker);
+      spokenIds.add(persona.id);
+
+      // 직원 발화 안에서 "현성 님, ..."처럼 다른 직원을 직접 부르면,
+      // 실제 메신저처럼 해당 직원이 같은 턴에서 짧게 확인/응답할 수 있도록 후속 라우팅한다.
+      const addressed = detectAddressedPersonas(text, personas, persona.id);
+      // 동료를 직접 멘션해 요청·질문한 경우에는 일반 라우팅보다 우선순위를 높인다.
+      // 이미 큐에 있던 직원도 앞으로 당겨서, 대화가 끝날 때까지 답변 없이 넘어가지 않도록 한다.
+      for (const target of [...addressed].reverse()) {
+        if (finalSpeakerPlan.length >= 3) break;
+        if (spokenIds.has(target.id)) continue;
+
+        const followupPlan: SpeakerPlanItem = {
+          id: target.id,
+          should_address: persona.id,
+          emotion: "확인",
+          intent: "동료 질문에 답변",
+          stance: "협업",
+          thought: "동료가 내 담당 범위에 직접 질문했으므로, 가능한 범위와 제약을 짧게 답한다.",
+        };
+
+        const existingIdx = speakerQueue.findIndex((s) => s.id === target.id);
+        if (existingIdx >= 0) {
+          const [existing] = speakerQueue.splice(existingIdx, 1);
+          speakerQueue.unshift({ ...existing, ...followupPlan });
+        } else {
+          speakerQueue.unshift(followupPlan);
+          queuedIds.add(target.id);
+        }
+
+        const remainingSlots = Math.max(0, 3 - finalSpeakerPlan.length);
+        while (speakerQueue.length > remainingSlots) {
+          const removed = speakerQueue.pop();
+          if (removed) queuedIds.delete(removed.id);
+        }
+      }
     }
 
     const splitResponses = flattenAndSplitResponses(responses);
@@ -509,7 +598,7 @@ const handleChatTurn = traceable(
       usage: { totalCost, totalInputTokens: totalIn, totalOutputTokens: totalOut },
       routing: {
         purpose: orchResult.purpose,
-        speakers: speakerPlan.map((s) => ({ id: s.id, intent: s.intent, stance: s.stance })),
+        speakers: finalSpeakerPlan.map((s) => ({ id: s.id, intent: s.intent, stance: s.stance, should_address: s.should_address })),
       },
     };
   },
