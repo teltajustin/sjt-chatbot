@@ -63,3 +63,14 @@ html { font-size: 16px; }
 .dots span:nth-child(2) { animation-delay: 0.2s; }
 .dots span:nth-child(3) { animation-delay: 0.4s; }
 .timer-blink { animation: timerBlink 1s infinite; }
+
+.mention-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: #e8f0fe;
+  color: #1264a3;
+  font-weight: 700;
+  white-space: nowrap;
+}
