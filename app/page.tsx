@@ -130,7 +130,7 @@ export default function Home(){
     if(inputRef.current)inputRef.current.style.height="auto";
     const userMsg:Msg={sender:"user",text,ts:timeNow()};const updated=[...messages,userMsg];
     setMessages([...updated,{sender:"loading",text:"",loading:true}]);
-    try{const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scenarioId:scenario.id,messages:updated,userMessage:text,personas,provider:selectedProvider})});
+    try{const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scenarioId:scenario.id,messages,userMessage:text,personas,provider:selectedProvider})});
     const data=await res.json();
     if(data.error){setMessages([...updated,{sender:"system",text:data.error,ts:timeNow()}]);}
     else{setMessages([...updated,...data.responses.map((r:any)=>({...r,ts:timeNow()}))]);if(data.usage){setTotalCost(c=>c+(data.usage.totalCost||0));setTotalTokens(t=>({input:t.input+(data.usage.totalInputTokens||0),output:t.output+(data.usage.totalOutputTokens||0)}));}}}
