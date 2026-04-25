@@ -519,7 +519,7 @@ const handleChatTurn = traceable(
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const provider = getDefaultProvider(body.provider);
+    const provider = getDefaultProvider(body?.provider);
     const result = await handleChatTurn(body.scenarioId, body.messages || [], body.userMessage || "", body.personas || [], provider);
     return NextResponse.json(result);
   } catch (e: any) {

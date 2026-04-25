@@ -46,12 +46,27 @@ export function getAvailableProviders(): LLMProvider[] {
   return available;
 }
 
-export function getDefaultProvider(): LLMProvider {
+function hasProviderKey(provider: LLMProvider): boolean {
+  if (provider === "gemini") return Boolean(process.env.GEMINI_API_KEY);
+  if (provider === "openai") return Boolean(process.env.OPENAI_API_KEY);
+  if (provider === "anthropic") return Boolean(process.env.ANTHROPIC_API_KEY);
+  return false;
+}
+
+export function isLLMProvider(value: unknown): value is LLMProvider {
+  return value === "gemini" || value === "openai" || value === "anthropic";
+}
+
+export function getDefaultProvider(preferredProvider?: unknown): LLMProvider {
+  if (isLLMProvider(preferredProvider) && hasProviderKey(preferredProvider)) {
+    return preferredProvider;
+  }
   if (process.env.GEMINI_API_KEY) return "gemini";
   if (process.env.OPENAI_API_KEY) return "openai";
   if (process.env.ANTHROPIC_API_KEY) return "anthropic";
   throw new Error("API 키가 설정되지 않았습니다.");
 }
+
 
 async function callAnthropicRaw(sys: string, user: string, max: number) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
