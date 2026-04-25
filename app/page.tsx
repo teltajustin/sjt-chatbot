@@ -236,7 +236,7 @@ export default function Home(){
         </div>
         <div><h2 style={{fontSize:"1.125rem",fontWeight:700,color:"#1d1c1d",marginBottom:16}}>시나리오 선택</h2>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14}}>{scenarios.map(sc=>(<button key={sc.id} onClick={()=>startScenario(sc)} style={{background:"#fff",border:"1px solid #e8e8e8",borderRadius:12,padding:20,textAlign:"left",cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}} onMouseEnter={e=>{e.currentTarget.style.borderColor="#1264a3";e.currentTarget.style.boxShadow="0 4px 12px rgba(18,100,163,0.12)";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="#e8e8e8";e.currentTarget.style.boxShadow="none";}}>
-            <div style={{fontSize:"0.75rem",fontWeight:600,color:"#007a5a",marginBottom:8}}>{sc.difficulty||"기본"}</div><div style={{fontSize:"1rem",fontWeight:700,color:"#1d1c1d",marginBottom:8}}>{sc.title}</div><div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.6}}>{compactText(sc.description,150)}</div>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}><span style={{fontSize:20}}>{sc.icon}</span><div style={{fontSize:"1rem",fontWeight:700,color:"#1d1c1d"}}>{sc.title}</div></div><div style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.6}}>{compactText(sc.description,150)}</div>
           </button>))}</div>
         </div>
       </div>
