@@ -119,10 +119,14 @@ export default function Home(){
   const saveSession=useCallback(async(evalText:string)=>{try{await fetch("/api/sessions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({startedAt:sessionStartedAt,jobId,jobLabel:JOB_CATEGORIES.find(j=>j.id===jobId)?.label||"",scenarioId:scenario?.id,scenarioTitle:scenario?.title,provider:selectedProvider,personas,messages:messages.filter(m=>!m.loading),evaluation:evalText,totalCost,totalTokens})});}catch(e){console.error(e);}},[sessionStartedAt,jobId,scenario,selectedProvider,personas,messages,totalCost,totalTokens]);
   const closeEvalAndReset=useCallback(()=>{setEvaluation(null);setPhase("job");setJobId("");setPersonas([]);setScenario(null);setMessages([]);setTotalCost(0);setTotalTokens({input:0,output:0});setTimeLeft(300);evalTriggered.current=false;},[]);
   const selectJob=useCallback(async(jid:string)=>{setJobId(jid);setPhase("loading_personas");setPersonaError("");try{const r=await fetch(`/api/personas?job=${jid}`);const d=await r.json();if(d.error){setPersonaError(d.error);setPhase("job");return;}setPersonas(d.personas);setPhase("scenario");}catch{setPersonaError("팀원 배정에 실패했습니다.");setPhase("job");}},[]);
-  const startScenario=useCallback((sc:Scenario)=>{setScenario(sc);setPhase("chat");setTimeLeft(300);setTimerActive(true);evalTriggered.current=false;setTotalCost(0);setTotalTokens({input:0,output:0});setEvaluation(null);setSessionStartedAt(new Date().toISOString());setMessages([{sender:"system",text:`[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 지금부터 5분간 팀원들과 이 문제에 대해 논의합니다.\n\n• 팀원들의 의견을 듣고 상황을 파악하세요.\n• 각자의 전문성을 활용해 해결 방향을 도출하세요.\n• 의견이 충돌하면 근거를 바탕으로 조율하세요.\n• 5분 안에 구체적인 다음 액션을 정하세요.`,ts:timeNow()}]);},[]);
+  const startScenario=useCallback((sc:Scenario)=>{setScenario(sc);setPhase("chat");setTimeLeft(300);setTimerActive(false);evalTriggered.current=false;setTotalCost(0);setTotalTokens({input:0,output:0});setEvaluation(null);setSessionStartedAt(new Date().toISOString());setMessages([{sender:"system",text:`[상황 브리핑]\n\n${sc.description}\n\n당신은 이 팀의 팀장입니다. 첫 메시지를 보내면 5분 타이머가 시작됩니다.\n\n• 팀원들의 의견을 듣고 상황을 파악하세요.\n• 각자의 전문성을 활용해 해결 방향을 도출하세요.\n• 의견이 충돌하면 근거를 바탕으로 조율하세요.\n• 5분 안에 구체적인 다음 액션을 정하세요.`,ts:timeNow()}]);},[]);
 
   const sendMessage=useCallback(async()=>{
-    if(!input.trim()||loading||!scenario||!timerActive)return;const text=input.trim();setInput("");setLoading(true);
+    if(!input.trim()||loading||!scenario)return;
+    // 첫 메시지에서 타이머 시작
+    if(!timerActive&&timeLeft===300){setTimerActive(true);setSessionStartedAt(new Date().toISOString());}
+    if(timeLeft<=0)return;
+    const text=input.trim();setInput("");setLoading(true);
     if(inputRef.current)inputRef.current.style.height="auto";
     const userMsg:Msg={sender:"user",text,ts:timeNow()};const updated=[...messages,userMsg];
     setMessages([...updated,{sender:"loading",text:"",loading:true}]);
@@ -132,7 +136,7 @@ export default function Home(){
     else{setMessages([...updated,...data.responses.map((r:any)=>({...r,ts:timeNow()}))]);if(data.usage){setTotalCost(c=>c+(data.usage.totalCost||0));setTotalTokens(t=>({input:t.input+(data.usage.totalInputTokens||0),output:t.output+(data.usage.totalOutputTokens||0)}));}}}
     catch{setMessages([...updated,{sender:"system",text:"네트워크 오류",ts:timeNow()}]);}
     setLoading(false);setTimeout(()=>inputRef.current?.focus(),100);
-  },[input,loading,messages,scenario,personas,selectedProvider,timerActive]);
+  },[input,loading,messages,scenario,personas,selectedProvider,timerActive,timeLeft]);
 
   const triggerAutoEvaluation=useCallback(async()=>{
     if(!scenario)return;setPhase("evaluating");setMessages(p=>[...p,{sender:"system",text:"시간이 종료되었습니다. 대화 내용을 분석하고 있습니다.",ts:timeNow()}]);
@@ -243,7 +247,7 @@ export default function Home(){
           </div>
           <textarea ref={inputRef} value={input} onChange={handleTextareaInput} onFocus={()=>setInputFocused(true)} onBlur={()=>setInputFocused(false)}
             onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendMessage();}}}
-            placeholder={loading?"팀원들이 응답 중...":timerDone?"시간 종료":`# ${scenario?.title||""}에 메시지 보내기`}
+            placeholder={loading?"팀원들이 응답 중...":timerDone?"시간 종료":!timerActive?`첫 메시지를 보내면 5분 타이머가 시작됩니다`:`# ${scenario?.title||""}에 메시지 보내기`}
             disabled={loading||timerDone} rows={1}
             style={{width:"100%",padding:"10px 14px",border:"none",outline:"none",fontSize:"0.9375rem",fontFamily:"inherit",background:"transparent",resize:"none",lineHeight:1.5,minHeight:44,maxHeight:120}}/>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 12px"}}>

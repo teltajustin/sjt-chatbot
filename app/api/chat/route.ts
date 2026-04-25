@@ -36,14 +36,52 @@ function ensureCompleteSentence(text: string): string {
   return trimmed + ".";
 }
 
+// 사용자 메시지에서 직원 이름 호출 감지
+function detectMentionedPersona(userMessage: string, personas: Persona[]): Persona | null {
+  for (const p of personas) {
+    const fullName = p.name;
+    // 풀네임, 이름(성 제외), 반말 호칭 등 매칭
+    // 예: "김휘원", "휘원", "휘원아", "휘원씨", "휘원님"
+    const firstName = fullName.length >= 2 ? fullName.slice(1) : fullName; // 성 제외
+    const patterns = [
+      fullName,
+      firstName,
+      firstName + "아",
+      firstName + "야",
+      firstName + "씨",
+      firstName + "님",
+      fullName + "씨",
+      fullName + "님",
+    ];
+    for (const pat of patterns) {
+      if (userMessage.includes(pat)) return p;
+    }
+  }
+  return null;
+}
+
 const decideSpeakers = traceable(
   async function decideSpeakers(
     convText: string, scenario: any, personas: Persona[],
-    recentSpeakers: string[], provider: LLMProvider
+    recentSpeakers: string[], mentionedPersona: Persona | null, provider: LLMProvider
   ) {
+    // 이름이 직접 호출된 경우 → 오케스트레이터 스킵, 해당 직원 최우선 응답
+    if (mentionedPersona) {
+      return {
+        speakers: [{
+          id: mentionedPersona.id,
+          should_address: "manager",
+          emotion: "집중",
+          intent: "답변",
+          thought: "팀장님이 나를 직접 부르셨다. 바로 답해야 한다.",
+        }],
+        cost: 0,
+        usage: { input_tokens: 0, output_tokens: 0 },
+      };
+    }
+
     const sys = buildOrchestratorPrompt(personas, scenario);
 
-    // 최근 발언자 정보를 명시적으로 전달
     const recentInfo = recentSpeakers.length > 0
       ? `\n\n[최근 발언 이력] 최근 직원 발언 순서: ${recentSpeakers.map(id => {
           const p = personas.find(pp => pp.id === id);
@@ -58,7 +96,6 @@ const decideSpeakers = traceable(
       const parsed = JSON.parse(cleaned);
       return { speakers: parsed.speakers || [], cost: result.estimatedCost, usage: result.usage };
     } catch {
-      // fallback: 최근 발언하지 않은 사람 우선
       const recentSet = new Set(recentSpeakers.slice(-2));
       const quiet = personas.filter(p => !recentSet.has(p.id));
       const pick = quiet.length > 0 ? quiet : personas;
@@ -85,7 +122,10 @@ const handleChatTurn = traceable(
     // 최근 4개 직원 발언의 sender 추출
     const recentSpeakers = getRecentSpeakers(allMessages, 4);
 
-    const orchResult = await decideSpeakers(convText, scenario, personas, recentSpeakers, provider);
+    // 이름 호출 감지
+    const mentionedPersona = detectMentionedPersona(userMessage, personas);
+
+    const orchResult = await decideSpeakers(convText, scenario, personas, recentSpeakers, mentionedPersona, provider);
     const speakerPlan = orchResult.speakers;
 
     const responses = [];
