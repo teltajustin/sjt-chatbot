@@ -1,99 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
-import crypto from "crypto";
 
-// ══════ Google Service Account ══════
+// ── OAuth 2.0 토큰 갱신 함수 ──
+async function getAccessToken(): Promise<string> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-interface ServiceAccountKey {
-  client_email: string;
-  private_key: string;
-  token_uri: string;
-}
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error("OAuth 환경 변수(CLIENT_ID, SECRET, REFRESH_TOKEN)가 설정되지 않았습니다.");
+  }
 
-function base64url(data: string | Buffer): string {
-  const buf = typeof data === "string" ? Buffer.from(data) : data;
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-async function getAccessToken(sa: ServiceAccountKey): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const payload = base64url(JSON.stringify({
-    iss: sa.client_email,
-    scope: "https://www.googleapis.com/auth/drive.file",
-    aud: sa.token_uri,
-    iat: now,
-    exp: now + 3600,
-  }));
-  const signInput = `${header}.${payload}`;
-  const sign = crypto.createSign("RSA-SHA256");
-  sign.update(signInput);
-  const signature = base64url(sign.sign(sa.private_key));
-  const jwt = `${signInput}.${signature}`;
-
-  const res = await fetch(sa.token_uri, {
+  const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
   });
-  if (!res.ok) throw new Error(`Token error: ${res.status} ${await res.text()}`);
+
+  if (!res.ok) {
+    throw new Error(`Token refresh error: ${res.status} ${await res.text()}`);
+  }
+
   const data = await res.json();
   return data.access_token;
 }
 
-function getServiceAccountKey(): ServiceAccountKey | null {
-  const envKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  if (envKey) {
-    try { return JSON.parse(envKey); } catch { return null; }
-  }
-  const email = process.env.GOOGLE_SA_CLIENT_EMAIL;
-  const privateKey = process.env.GOOGLE_SA_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (email && privateKey) {
-    return { client_email: email, private_key: privateKey, token_uri: "https://oauth2.googleapis.com/token" };
-  }
-  return null;
-}
-
-// ── Google Drive 업로드 (403 storageQuota 해결) ──
-// 핵심: Service Account는 자체 저장소가 없으므로 반드시 공유된 폴더(parents)에 저장해야 함
-// supportsAllDrives=true 플래그로 공유 드라이브도 지원
+// ── Google Drive 업로드 (OAuth 방식) ──
 async function uploadToGoogleDrive(filename: string, jsonContent: string): Promise<string | null> {
-  const sa = getServiceAccountKey();
-  if (!sa) {
-    console.log("Google Drive: Service Account 미설정, 스킵");
-    return null;
-  }
-
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-  if (!folderId) {
-    console.error("Google Drive: GOOGLE_DRIVE_FOLDER_ID가 설정되지 않았습니다. Service Account는 자체 저장소가 없으므로 반드시 공유 폴더 ID가 필요합니다.");
-    return null;
-  }
-
+  
   try {
-    const accessToken = await getAccessToken(sa);
+    // 1. OAuth Access Token 가져오기
+    const accessToken = await getAccessToken();
     const boundary = "sjt_boundary_" + Date.now();
 
-    // parents에 반드시 폴더 ID 포함 → Service Account 자체 드라이브가 아닌 공유 폴더에 저장
-    const metadata = JSON.stringify({
+    // 2. 메타데이터 설정 (parents가 있으면 해당 폴더로, 없으면 내 드라이브 루트로)
+    const metadata: any = {
       name: filename,
       mimeType: "application/json",
-      parents: [folderId],
-    });
+    };
+    if (folderId) {
+      metadata.parents = [folderId];
+    }
 
     const body =
       `--${boundary}\r\n` +
       `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-      `${metadata}\r\n` +
+      `${JSON.stringify(metadata)}\r\n` +
       `--${boundary}\r\n` +
       `Content-Type: application/json\r\n\r\n` +
       `${jsonContent}\r\n` +
       `--${boundary}--`;
 
-    // supportsAllDrives=true → 공유 드라이브 지원
+    // 3. 업로드 요청
     const res = await fetch(
-      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true",
+      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
       {
         method: "POST",
         headers: {
@@ -111,7 +78,7 @@ async function uploadToGoogleDrive(filename: string, jsonContent: string): Promi
     }
 
     const data = await res.json();
-    console.log("Google Drive 저장 완료:", data.id, data.name);
+    console.log("Google Drive 저장 완료 (OAuth):", data.id, data.name);
     return data.id;
   } catch (err: any) {
     console.error("Google Drive exception:", err.message);
@@ -148,23 +115,24 @@ export async function POST(req: NextRequest) {
     const filename = `sjt-${jobId}-${timestamp}.json`;
     const jsonContent = JSON.stringify(session, null, 2);
 
-    // 1. 로컬 저장 (Vercel에서는 실패해도 무시)
+    // 1. 로컬 저장 시도 (Vercel 환경 고려)
     let localSaved = false;
     try {
       const sessionsDir = path.join(process.cwd(), "sessions");
       await mkdir(sessionsDir, { recursive: true });
       await writeFile(path.join(sessionsDir, filename), jsonContent, "utf-8");
       localSaved = true;
-      console.log("로컬 저장 완료:", filename);
-    } catch {
-      // Vercel 서버리스에서는 정상적으로 실패함 (읽기전용 파일시스템)
+    } catch (e) {
+      // 로컬 쓰기 실패는 Vercel 환경에서 일반적이므로 조용히 넘어감
     }
 
-    // 2. Google Drive 저장
+    // 2. Google Drive 저장 (OAuth 방식 호출)
     const driveFileId = await uploadToGoogleDrive(filename, jsonContent);
 
     return NextResponse.json({
-      saved: true, filename, local: localSaved,
+      saved: true,
+      filename,
+      local: localSaved,
       googleDrive: driveFileId ? { fileId: driveFileId } : null,
     });
   } catch (error: any) {
