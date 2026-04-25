@@ -16,7 +16,6 @@ function buildConversationText(messages: any[], personas: Persona[]): string {
     .join("\n");
 }
 
-// 최근 N턴의 발언자 ID 추출
 function getRecentSpeakers(messages: any[], lastN: number): string[] {
   const employeeMsgs = messages.filter((m: any) => m.sender !== "user" && m.sender !== "system" && !m.loading);
   return employeeMsgs.slice(-lastN).map((m: any) => m.sender);
@@ -36,13 +35,12 @@ function ensureCompleteSentence(text: string): string {
   return trimmed + ".";
 }
 
-// 사용자 메시지에서 직원 이름 호출 감지
-function detectMentionedPersona(userMessage: string, personas: Persona[]): Persona | null {
+// ── 복수 이름 호출 감지: "현지와 예슬이" → [현지, 예슬] 모두 반환 ──
+function detectMentionedPersonas(userMessage: string, personas: Persona[]): Persona[] {
+  const mentioned: Persona[] = [];
   for (const p of personas) {
     const fullName = p.name;
-    // 풀네임, 이름(성 제외), 반말 호칭 등 매칭
-    // 예: "김휘원", "휘원", "휘원아", "휘원씨", "휘원님"
-    const firstName = fullName.length >= 2 ? fullName.slice(1) : fullName; // 성 제외
+    const firstName = fullName.length >= 2 ? fullName.slice(1) : fullName;
     const patterns = [
       fullName,
       firstName,
@@ -50,38 +48,47 @@ function detectMentionedPersona(userMessage: string, personas: Persona[]): Perso
       firstName + "야",
       firstName + "씨",
       firstName + "님",
+      firstName + "이",   // "예슬이", "현지이" → 한국어 호칭
+      firstName + "이는",
+      firstName + "이가",
+      firstName + "이한테",
+      firstName + "한테",
+      firstName + "에게",
       fullName + "씨",
       fullName + "님",
     ];
     for (const pat of patterns) {
-      if (userMessage.includes(pat)) return p;
+      if (userMessage.includes(pat)) {
+        mentioned.push(p);
+        break; // 한 사람당 한 번만
+      }
     }
   }
-  return null;
+  return mentioned;
 }
 
 const decideSpeakers = traceable(
   async function decideSpeakers(
     convText: string, scenario: any, personas: Persona[],
-    recentSpeakers: string[], mentionedPersona: Persona | null, provider: LLMProvider
+    recentSpeakers: string[], mentionedPersonas: Persona[], provider: LLMProvider
   ) {
-    // 이름이 직접 호출된 경우 → 오케스트레이터 스킵, 해당 직원 최우선 응답
-    if (mentionedPersona) {
+    // 이름이 호출된 경우 → 호출된 모든 직원이 응답
+    if (mentionedPersonas.length > 0) {
       return {
-        speakers: [{
-          id: mentionedPersona.id,
+        speakers: mentionedPersonas.map(p => ({
+          id: p.id,
           should_address: "manager",
           emotion: "집중",
           intent: "답변",
-          thought: "팀장님이 나를 직접 부르셨다. 바로 답해야 한다.",
-        }],
+          thought: "팀장님이 나를 직접 부르셨다. 내 담당 업무 기준으로 답해야 한다.",
+        })),
         cost: 0,
         usage: { input_tokens: 0, output_tokens: 0 },
       };
     }
 
+    // 이름 호출 없으면 오케스트레이터가 판단
     const sys = buildOrchestratorPrompt(personas, scenario);
-
     const recentInfo = recentSpeakers.length > 0
       ? `\n\n[최근 발언 이력] 최근 직원 발언 순서: ${recentSpeakers.map(id => {
           const p = personas.find(pp => pp.id === id);
@@ -118,14 +125,12 @@ const handleChatTurn = traceable(
 
     const allMessages = [...messages, { sender: "user", text: userMessage }];
     let convText = buildConversationText(allMessages, personas);
-
-    // 최근 4개 직원 발언의 sender 추출
     const recentSpeakers = getRecentSpeakers(allMessages, 4);
 
-    // 이름 호출 감지
-    const mentionedPersona = detectMentionedPersona(userMessage, personas);
+    // 복수 이름 감지
+    const mentionedPersonas = detectMentionedPersonas(userMessage, personas);
 
-    const orchResult = await decideSpeakers(convText, scenario, personas, recentSpeakers, mentionedPersona, provider);
+    const orchResult = await decideSpeakers(convText, scenario, personas, recentSpeakers, mentionedPersonas, provider);
     const speakerPlan = orchResult.speakers;
 
     const responses = [];
@@ -157,7 +162,6 @@ const handleChatTurn = traceable(
     }
 
     if (responses.length === 0) {
-      // fallback: 최근 안 말한 사람 선택
       const recentSet = new Set(recentSpeakers.slice(-2));
       const fb = personas.find(p => !recentSet.has(p.id)) || personas[0];
       const sys = buildEmployeeSystemPrompt(fb, scenario, personas);
