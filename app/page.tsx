@@ -104,13 +104,120 @@ function SlackMessage({msg,personas,isConsecutive}:{msg:Msg;personas:Persona[];i
 
 function Timer({seconds}:{seconds:number}){const m=Math.floor(seconds/60);const s=seconds%60;const warn=seconds<=60&&seconds>0;return(<div className={warn?"timer-blink":""} style={{fontFamily:"'JetBrains Mono',monospace",fontSize:"0.8125rem",fontWeight:500,color:warn?"#e01e5a":"#1d1c1d",background:warn?"#fce4ec":"#f0f0f0",padding:"4px 10px",borderRadius:6}}>{m}:{s.toString().padStart(2,"0")}</div>);}
 
+/* ── Score parser ── */
+function parseEvaluation(text:string){
+  const dims=[
+    {key:"리더십",label:"리더십",en:"Leadership"},
+    {key:"소통",label:"소통 능력",en:"Communication"},
+    {key:"갈등",label:"갈등 관리",en:"Conflict Mgmt"},
+    {key:"문제해결",label:"문제해결",en:"Problem Solving"},
+    {key:"감성지능",label:"감성지능",en:"Emotional Intel."},
+  ];
+  const scores:Array<{label:string;en:string;score:number;reason:string}>=[];
+  let total=0;
+  for(const d of dims){
+    const sm=text.match(new RegExp(`${d.key}[\\s\\S]{0,80}?(\\d)\\s*/\\s*5`,"i"));
+    const sc=sm?parseInt(sm[1]):3;
+    const rm=text.match(new RegExp(`${d.key}[\\s\\S]{0,250}?근거[:\\s]*([^\\n]+(?:\\n(?![\\d종핵개실점])[^\\n]+)*)`,"i"));
+    scores.push({label:d.label,en:d.en,score:sc,reason:rm?rm[1].trim().slice(0,220):""});
+    total+=sc;
+  }
+  const tm=text.match(/종합\s*점수[:\s]*(\d+)\s*\/\s*25/);
+  if(tm)total=parseInt(tm[1]);
+  const extract=(key:string)=>{const m=text.match(new RegExp(`${key}[:\\s]*([\\s\\S]*?)(?=핵심|개선|실천|$)`,"i"));return m?m[1].trim():"";};
+  return{scores,total,summary:extract("종합\\s*평가"),strengths:extract("핵심\\s*강점"),improvements:extract("개선\\s*포인트"),suggestions:(text.match(/실천\s*제안[:\s]*([\s\S]*?)$/i)||[])[1]?.trim()||""};
+}
+
+function ScoreBar({score,max=5}:{score:number;max?:number}){
+  const pct=(score/max)*100;
+  const c=score>=4?"#007a5a":score>=3?"#1264a3":score>=2?"#ecb22e":"#e01e5a";
+  return(<div style={{display:"flex",alignItems:"center",gap:10,width:"100%"}}>
+    <div style={{flex:1,height:8,background:"#f0f0f0",borderRadius:4,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:c,borderRadius:4,transition:"width 0.6s ease"}}/></div>
+    <span style={{fontSize:"0.9375rem",fontWeight:700,color:c,minWidth:32,textAlign:"right",fontFamily:"'JetBrains Mono',monospace"}}>{score}/{max}</span>
+  </div>);
+}
+
 function EvalModal({text,onClose}:{text:string;onClose:()=>void}){
+  const p=parseEvaluation(text);
+  const avg=p.total/5;
+  const grade=avg>=4.5?"S":avg>=4?"A":avg>=3?"B":avg>=2?"C":"D";
+  const gc=grade==="S"?"#007a5a":grade==="A"?"#1264a3":grade==="B"?"#ecb22e":"#e01e5a";
+  const now=new Date();
+  const ds=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,"0")}.${String(now.getDate()).padStart(2,"0")}`;
+
   return(
-    <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"clamp(12px,3vw,24px)"}} onClick={onClose}>
-      <div style={{background:"#fff",borderRadius:12,maxWidth:640,width:"100%",maxHeight:"85vh",overflow:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}} onClick={e=>e.stopPropagation()}>
-        <div style={{padding:"20px 24px",borderBottom:"1px solid #e8e8e8",display:"flex",justifyContent:"space-between",alignItems:"center"}}><h2 style={{fontSize:"1.125rem",fontWeight:700}}>역량 평가 결과</h2><button onClick={onClose} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:"#999"}}>✕</button></div>
-        <div style={{padding:"20px 24px",whiteSpace:"pre-wrap",fontSize:"0.875rem",lineHeight:1.8,color:"#1d1c1d"}}>{text}</div>
-        <div style={{padding:"16px 24px",borderTop:"1px solid #e8e8e8",display:"flex",justifyContent:"flex-end"}}><button onClick={onClose} style={{background:"#007a5a",color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:"0.875rem",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>확인</button></div>
+    <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"clamp(8px,2vw,20px)"}} onClick={onClose}>
+      <div style={{background:"#fff",borderRadius:12,maxWidth:720,width:"100%",maxHeight:"90vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.35)"}} onClick={e=>e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{background:"#1a1d21",padding:"28px 32px",borderRadius:"12px 12px 0 0"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div>
+              <div style={{fontSize:"0.6875rem",color:"#999",textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>SJT Assessment Report</div>
+              <h2 style={{fontSize:"1.375rem",fontWeight:800,color:"#fff",marginBottom:4}}>상황판단 역량 평가 리포트</h2>
+              <div style={{fontSize:"0.8125rem",color:"#ababad"}}>{ds}</div>
+            </div>
+            <button onClick={onClose} style={{background:"rgba(255,255,255,0.1)",border:"none",borderRadius:6,width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"#999",fontSize:16}}>✕</button>
+          </div>
+        </div>
+
+        {/* Total Score */}
+        <div style={{padding:"24px 32px",borderBottom:"1px solid #e8e8e8",display:"flex",alignItems:"center",gap:24,flexWrap:"wrap"}}>
+          <div style={{textAlign:"center"}}>
+            <div style={{width:80,height:80,borderRadius:"50%",border:`4px solid ${gc}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:`${gc}0a`}}>
+              <div style={{fontSize:"1.75rem",fontWeight:800,color:gc,fontFamily:"'JetBrains Mono',monospace",lineHeight:1}}>{p.total}</div>
+              <div style={{fontSize:"0.6875rem",color:"#999"}}>/25</div>
+            </div>
+            <div style={{marginTop:6,fontSize:"0.8125rem",fontWeight:700,color:gc}}>Grade {grade}</div>
+          </div>
+          <div style={{flex:1,minWidth:200}}>{p.summary&&<p style={{fontSize:"0.875rem",color:"#1d1c1d",lineHeight:1.7}}>{p.summary}</p>}</div>
+        </div>
+
+        {/* Dimension Scores */}
+        <div style={{padding:"24px 32px",borderBottom:"1px solid #e8e8e8"}}>
+          <h3 style={{fontSize:"0.75rem",fontWeight:600,color:"#999",textTransform:"uppercase",letterSpacing:1,marginBottom:16}}>역량별 상세 평가</h3>
+          <div style={{display:"flex",flexDirection:"column",gap:16}}>
+            {p.scores.map((s,i)=>(<div key={i}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+                <div><span style={{fontSize:"0.9375rem",fontWeight:700,color:"#1d1c1d"}}>{s.label}</span><span style={{fontSize:"0.6875rem",color:"#999",marginLeft:6}}>{s.en}</span></div>
+              </div>
+              <ScoreBar score={s.score}/>
+              {s.reason&&<p style={{fontSize:"0.8125rem",color:"#616061",lineHeight:1.6,marginTop:6,paddingLeft:2}}>{s.reason}</p>}
+            </div>))}
+          </div>
+        </div>
+
+        {/* Strengths & Improvements */}
+        <div style={{padding:"24px 32px",borderBottom:"1px solid #e8e8e8",display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+              <div style={{width:20,height:20,borderRadius:4,background:"#e8f5e9",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#007a5a"}}>▲</div>
+              <h4 style={{fontSize:"0.8125rem",fontWeight:700,color:"#007a5a"}}>핵심 강점</h4>
+            </div>
+            <p style={{fontSize:"0.8125rem",color:"#1d1c1d",lineHeight:1.6}}>{p.strengths||"—"}</p>
+          </div>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+              <div style={{width:20,height:20,borderRadius:4,background:"#fff3e0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#e65100"}}>▼</div>
+              <h4 style={{fontSize:"0.8125rem",fontWeight:700,color:"#e65100"}}>개선 포인트</h4>
+            </div>
+            <p style={{fontSize:"0.8125rem",color:"#1d1c1d",lineHeight:1.6}}>{p.improvements||"—"}</p>
+          </div>
+        </div>
+
+        {/* Suggestions */}
+        {p.suggestions&&(<div style={{padding:"24px 32px",borderBottom:"1px solid #e8e8e8"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+            <div style={{width:20,height:20,borderRadius:4,background:"#e8f0fe",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#1264a3"}}>→</div>
+            <h4 style={{fontSize:"0.8125rem",fontWeight:700,color:"#1264a3"}}>실천 제안</h4>
+          </div>
+          <p style={{fontSize:"0.8125rem",color:"#1d1c1d",lineHeight:1.6}}>{p.suggestions}</p>
+        </div>)}
+
+        {/* Footer */}
+        <div style={{padding:"16px 32px",borderTop:"1px solid #e8e8e8",display:"flex",justifyContent:"flex-end",borderRadius:"0 0 12px 12px"}}>
+          <button onClick={onClose} style={{background:"#007a5a",color:"#fff",border:"none",borderRadius:6,padding:"10px 24px",fontSize:"0.875rem",fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>확인</button>
+        </div>
       </div>
     </div>);
 }
