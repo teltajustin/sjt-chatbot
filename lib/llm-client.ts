@@ -17,17 +17,17 @@ interface LLMConfig {
 export const LLM_CONFIGS: Record<LLMProvider, LLMConfig> = {
   gemini: {
     provider: "gemini",
-    model: "gemini-3.1-flash-lite-preview",
-    label: "Gemini 3.1 Flash-Lite",
-    inputCostPer1M: 0.25,
-    outputCostPer1M: 1.5,
+    model: "gemini-3.1-pro-preview",
+    label: "Gemini 3.1 Pro",
+    inputCostPer1M: 2.0,
+    outputCostPer1M: 12.0,
   },
   openai: {
     provider: "openai",
-    model: "gpt-4o",
-    label: "GPT-4o",
+    model: "gpt-5.4",
+    label: "GPT-5.4",
     inputCostPer1M: 2.5,
-    outputCostPer1M: 10,
+    outputCostPer1M: 15.0,
   },
   anthropic: {
     provider: "anthropic",
