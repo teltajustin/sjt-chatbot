@@ -1,0 +1,56 @@
+{
+  "meta": {
+    "startedAt": "2026-04-26T12:17:44.958Z",
+    "endedAt": "2026-04-26T12:27:45.428Z",
+    "jobId": "hr",
+    "jobLabel": "인사",
+    "scenarioId": "hr_layoff",
+    "scenarioTitle": "구조조정 실행 계획",
+    "provider": "openai",
+    "totalCost": 0,
+    "totalTokens": {
+      "input": 0,
+      "output": 0
+    }
+  },
+  "personas": [
+    {
+      "name": "성재욱",
+      "role": "교육 담당",
+      "age": 43,
+      "sex": "남자",
+      "occupation": "공공행정 사무원",
+      "province": "대전",
+      "district": "대전-서구"
+    },
+    {
+      "name": "정승주",
+      "role": "채용 담당",
+      "age": 41,
+      "sex": "여자",
+      "occupation": "사회복지사",
+      "province": "충청북",
+      "district": "충청북-청주시 흥덕구"
+    },
+    {
+      "name": "서수연",
+      "role": "노무 담당",
+      "age": 32,
+      "sex": "여자",
+      "occupation": "교육 및 훈련 사무원",
+      "province": "경기",
+      "district": "경기-광명시"
+    }
+  ],
+  "chatLog": [
+    {
+      "sender": "user",
+      "text": "전체 인원의 10% 대상자를 어떻게 정하지?"
+    },
+    {
+      "sender": "user",
+      "text": "어떠헥 하지?"
+    }
+  ],
+  "evaluation": "평가 실패"
+}

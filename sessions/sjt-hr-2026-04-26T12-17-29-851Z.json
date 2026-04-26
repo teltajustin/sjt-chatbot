@@ -1,0 +1,71 @@
+{
+  "meta": {
+    "startedAt": "2026-04-26T12:15:17.611Z",
+    "endedAt": "2026-04-26T12:17:29.851Z",
+    "jobId": "hr",
+    "jobLabel": "인사",
+    "scenarioId": "hr_layoff",
+    "scenarioTitle": "구조조정 실행 계획",
+    "provider": "gemini",
+    "totalCost": 0.032402,
+    "totalTokens": {
+      "input": 13969,
+      "output": 372
+    }
+  },
+  "personas": [
+    {
+      "name": "박지혜",
+      "role": "인사팀 대리",
+      "age": 41,
+      "sex": "여자",
+      "occupation": "교육 및 훈련 사무원",
+      "province": "전북",
+      "district": "전북-장수군"
+    },
+    {
+      "name": "전보배",
+      "role": "인사팀 사원",
+      "age": 36,
+      "sex": "여자",
+      "occupation": "일반 비서",
+      "province": "서울",
+      "district": "서울-은평구"
+    },
+    {
+      "name": "김가현",
+      "role": "노무 담당",
+      "age": 29,
+      "sex": "여자",
+      "occupation": "조세행정 사무원",
+      "province": "서울",
+      "district": "서울-성북구"
+    }
+  ],
+  "chatLog": [
+    {
+      "sender": "user",
+      "text": "전체 인원의 10%를 감축하려면 어느 직급부터 감축해야될까?"
+    },
+    {
+      "sender": "emp_0",
+      "text": "팀장님, 특정 직급을 바로 정하기보다는 현재 직급별 인원 분포와 최근 3개년 성과 평가 데이터를 먼저 확인해 보는 것이."
+    },
+    {
+      "sender": "emp_1",
+      "text": "팀장님, 특정 직급을 바로 타겟팅한다는 소문이 돌면 이직을 고민 중인 핵심 인재."
+    },
+    {
+      "sender": "user",
+      "text": "어떻게 하는게 좋아?"
+    },
+    {
+      "sender": "emp_2",
+      "text": "팀장님, 부당해고 리스크와 노조의 즉각적인 반발을 피하려면 1차로 희."
+    },
+    {
+      "sender": "emp_0",
+      "text": "@김가현 1차 희망퇴직으로 진행하는 방향이 가장 합리적일 것 같습니다."
+    }
+  ]
+}
