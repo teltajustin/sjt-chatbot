@@ -186,10 +186,8 @@ export default function Home(){
 
     try{
       const res=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scenarioId:scenario.id,messages:messagesForApi,userMessage:userMsg.text,personas,provider:selectedProvider})});
-      const data=await res.json().catch(()=>({}));
-      if(!res.ok){
-        throw new Error(data?.error||"대화 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
-      }
+      if(!res.ok)throw new Error("chat error");
+      const data=await res.json();
       if(data.usage){setTotalCost(c=>c+(data.usage.totalCost||0));setTotalTokens(t=>({input:t.input+(data.usage.totalInputTokens||0),output:t.output+(data.usage.totalOutputTokens||0)}));}
       const responses=(data.responses||[]) as {sender:string;text:string;delayMs?:number}[];
       if(responses.length===0){
@@ -229,8 +227,8 @@ export default function Home(){
         responseTimersRef.current.push(typingTimer,messageTimer);
       });
     }
-    catch(e:any){
-      setMessagesValue(prev=>[...prev.filter(m=>!m.loading),{sender:"system",text:e?.message||"네트워크 오류가 발생했습니다.",ts:timeNow()}]);
+    catch{
+      setMessagesValue(prev=>[...prev.filter(m=>!m.loading),{sender:"system",text:"네트워크 오류가 발생했습니다.",ts:timeNow()}]);
       activeResponseBatchRef.current=false;
       setLoadingValue(false);
       focusInput();
